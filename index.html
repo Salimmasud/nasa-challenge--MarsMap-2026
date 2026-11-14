@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ARES-V // Marswalk EVA Tactical Survival &amp; Route Planner - Jezero Crater</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2306090e'/%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='%2300f0ff' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23ff2a4b'/%3E%3C/svg%3E">
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
@@ -61,28 +62,32 @@
     <!-- Header Controls -->
     <div class="header-right">
       <button class="hud-btn btn-emergency" id="btnSolarStorm" title="Simulate Solar Particle Event (SPE) / Dust Storm">
-        <span class="pulse-icon">&#9888;</span> SOLAR STORM (SPE)
+        <span class="pulse-icon">&#9888;</span> SOLAR STORM
       </button>
-      <button class="hud-btn btn-view3d" id="btnToggle3D" title="Toggle Synchronized 3D HiRISE Terrain Viewport">
-        &#127760; 3D TERRAIN: ON
+      <button class="hud-btn btn-view3d" id="btnFlyJezero" title="Switch to 2D HiRISE Tactical Jezero EVA Map">
+        &#127919; JEZERO EVA (2D)
+      </button>
+      <button class="hud-btn btn-primary" id="btnFlyOrbital" title="View 3D Spherical Mars Globe in Space">
+        &#128752; 3D MARS GLOBE
       </button>
       <button class="hud-btn btn-audio" id="btnToggleAudio" title="Toggle Tactical Audio Feedback">
         <span id="audioIcon">&#128266;</span> SFX: ON
       </button>
       <button class="hud-btn btn-secondary" id="btnExportEVA" title="Export Mission EVA Plan">
-        &#128203; EXPORT PLAN
+        &#128203; EXPORT
       </button>
     </div>
   </header>
 
-  <!-- Full-Viewport 100vw x 100vh Tactical Map Canvas -->
+  <!-- Full-Viewport 100vw x 100vh Tactical Map + 3D Globe Canvas -->
   <main class="hud-viewport">
     <div id="map" class="tactical-map"></div>
+    <div id="globeView" class="tactical-globe"></div>
 
     <!-- Bottom-Center Floating Telemetry & Gravity Scale Bar -->
     <div class="map-hud-overlay">
       <div class="map-badge coords-badge" id="hudCursorCoords">LAT: 18.4447&deg; N | LON: 77.4508&deg; E</div>
-      <div class="map-badge scale-badge">3.72 m/s&sup2; MARS GRAVITY (0.38G) | CRS: EPSG:4326</div>
+      <div class="map-badge scale-badge">3.72 m/s&sup2; MARS GRAVITY | ELLIPSOID 3396.19&times;3376.20 km | EPSG:4326</div>
     </div>
 
     <!-- LEFT FLOATING COLLAPSIBLE DRAWER: NASA Mission Layers & Provenance -->
@@ -185,9 +190,10 @@
 
         <div class="drawer-section-label basemap-label">ORBITAL BASEMAP</div>
         <div class="map-basemap-selector">
-          <button class="basemap-pill active" data-basemap="openplanetary">OpenPlanetary Mars</button>
-          <button class="basemap-pill" data-basemap="mola">USGS MOLA Hillshade</button>
-          <button class="basemap-pill" data-basemap="satellite">Orbital High-Res</button>
+          <button class="basemap-pill active" data-basemap="hirise">NASA HiRISE 25cm (Jezero)</button>
+          <button class="basemap-pill" data-basemap="viking">USGS Viking MDIM 2.1 Color</button>
+          <button class="basemap-pill" data-basemap="mola-color">NASA MGS MOLA Color Elevation</button>
+          <button class="basemap-pill" data-basemap="mola">ESA HRSC + MOLA Hillshade</button>
         </div>
       </div>
     </aside>
@@ -397,24 +403,6 @@
       </div>
     </aside>
 
-    <!-- Floating PiP 3D Terrain Elevation Viewport (Three.js) -->
-    <div class="terrain-3d-panel" id="terrain3dPanel">
-      <div class="terrain-3d-header">
-        <div class="t3d-title">
-          <span class="pulse-dot"></span> 3D TERRAIN ELEVATION (HiRISE DTM)
-        </div>
-        <div class="t3d-actions">
-          <button class="t3d-btn" id="btnReset3DCamera" title="Reset Camera View">&#10226; RESET</button>
-          <button class="t3d-btn" id="btnToggle3DRotate" title="Toggle Auto-Rotation">&#128260; ROTATE</button>
-          <button class="t3d-btn" id="btnClose3D" title="Minimize 3D View">&#10006;</button>
-        </div>
-      </div>
-      <div class="terrain-3d-canvas-wrap" id="terrain3dCanvas"></div>
-      <div class="terrain-3d-footer">
-        <span>Drag to Rotate &bull; Scroll to Zoom &bull; Right-click Pan</span>
-        <span class="t3d-badge">180m MESH &bull; 3.72 m/s&sup2;</span>
-      </div>
-    </div>
   </main>
 
   <!-- Emergency Space Weather Modal -->
@@ -463,7 +451,7 @@
   <script src="js/jezero-data.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/pathfinding.js"></script>
-  <script src="js/terrain3d.js"></script>
+  <script src="js/mars-globe.js"></script>
   <script src="js/telemetry.js"></script>
   <script src="js/app.js"></script>
 </body>

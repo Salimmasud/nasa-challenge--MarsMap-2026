@@ -1,8 +1,8 @@
 /**
  * ============================================================================
- * ARES-V // MARSWALK TACTICAL SURVIVAL GUIDE - MAIN APPLICATION CONTROLLER
- * Integrates 2D Leaflet, 3D Three.js terrain, all 7 NASA data modalities,
- * real-time terrain inspector, and A* hazard pathfinding.
+ * ARES-V // MARSWALK TACTICAL SURVIVAL GUIDE - HYBRID 3D GLOBE + 2D HiRISE APP
+ * Outer Orbital View: 3D Spherical Mars Globe (Three.js + USGS WMS)
+ * Inner Surface View: Crisp 2D Leaflet Tactical Map (NASA 25cm HiRISE + 7 Layers)
  * ============================================================================
  */
 
@@ -12,14 +12,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const telemetry = new window.SpacesuitTelemetryModel();
   const audio = window.tacticalAudio;
 
-  let terrain3D = null;
   let map = null;
+  let globe = null;
+  let viewMode = 'orbital'; // 'orbital' (3D Mars Globe) | 'surface' (2D HiRISE Map)
+
   let currentBasemap = null;
   let activeRouteLayer = null;
   let comparisonStraightLine = null;
   let customWaypointMarker = null;
+  let customDestCoord = null;
 
-  // 7 NASA Modality Layer Groups
+  // 7 NASA Modality Layer Groups (2D Leaflet)
   const hazardLayerGroup = L.layerGroup();
   const themisLayerGroup = L.layerGroup();
   const mineralLayerGroup = L.layerGroup();
@@ -32,23 +35,22 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentEnd = [...data.waypoints[1].coords];   // Kodiak Butte
 
   // --------------------------------------------------------------------------
-  // 1. Initialize Leaflet Tactical Map
+  // 1. Initialize 2D Leaflet Tactical Map + 3D Spherical Mars Globe
   // --------------------------------------------------------------------------
-  function initMap() {
+  function initMaps() {
+    // A) 2D Leaflet Tactical Map (Inner Jezero EVA Surface)
     map = L.map('map', {
       center: data.center,
       zoom: data.defaultZoom,
-      minZoom: 11,
-      maxZoom: 16,
+      minZoom: 10,
+      maxZoom: 18,
       zoomControl: false,
       attributionControl: false
     });
 
     L.control.zoom({ position: 'topleft' }).addTo(map);
+    setBasemap('hirise');
 
-    setBasemap('openplanetary');
-
-    // Setup all 7 NASA scientific layers
     setupHazardLayer();
     setupThemisLayer();
     setupMineralLayer();
@@ -57,7 +59,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupWaypointMarkers();
     setupContourLayer();
 
-    // Add to map by default
     hazardLayerGroup.addTo(map);
     themisLayerGroup.addTo(map);
     mineralLayerGroup.addTo(map);
@@ -66,264 +67,398 @@ document.addEventListener('DOMContentLoaded', () => {
     waypointLayerGroup.addTo(map);
     contourLayerGroup.addTo(map);
 
-    // Map listeners
-    map.on('mousemove', onMapMouseMove);
-    map.on('click', onMapClick);
+    map.on('mousemove', (e) => {
+      if (viewMode === 'surface') {
+        updateCursorHUD(e.latlng.lat, e.latlng.lng);
+      }
+    });
 
-    // Initialize Synchronized 3D Terrain
+    map.on('click', (e) => {
+      onSurfaceTargetSelected(e.latlng.lat, e.latlng.lng, true);
+    });
+
+    // Auto-transition back to 3D Mars Globe when user zooms all the way out of 2D Jezero map
+    map.on('zoomend', () => {
+      if (viewMode === 'surface' && map.getZoom() <= 10) {
+        setViewMode('orbital');
+        setTimeout(() => {
+          map.setView(data.center, data.defaultZoom, { animate: false });
+        }, 450);
+      }
+    });
+
+    // B) 3D Spherical Mars Globe (Outer Orbital Mars Planet)
     try {
-      terrain3D = new window.JezeroTerrain3D('terrain3dCanvas', pathfinder);
+      globe = new window.JezeroMarsGlobe('globeView', data, pathfinder, {
+        onHover: (lat, lon) => {
+          if (viewMode === 'orbital') {
+            updateCursorHUD(lat, lon);
+          }
+        },
+        onEnterJezero: () => {
+          audio.playClick();
+          setViewMode('surface');
+        },
+        onWaypointClick: (wp) => {
+          audio.playClick();
+          setViewMode('surface');
+          selectWaypoint(wp);
+        },
+        onGlobalLandmarkClick: (lm) => {
+          audio.playClick();
+          const latDir = lm.lat >= 0 ? 'N' : 'S';
+          const lonDir = lm.lon >= 0 ? 'E' : 'W';
+          document.getElementById('inspCoords').textContent = `${Math.abs(lm.lat).toFixed(2)}° ${latDir}, ${Math.abs(lm.lon).toFixed(2)}° ${lonDir}`;
+          document.getElementById('inspElev').textContent = `${lm.elev} m`;
+          document.getElementById('inspSlope').textContent = 'Planetary Scale';
+          document.getElementById('inspSoil').textContent = 'Regional Mars Terrain';
+          document.getElementById('inspMineral').textContent = `${lm.name} — ${lm.desc}`;
+          document.getElementById('inspTemp').textContent = '-63°C (Global Mean)';
+          document.getElementById('inspRad').textContent = '0.24 mSv/day (GCR Baseline)';
+          document.getElementById('inspProv').textContent = 'USGS Astrogeology / MGS MOLA Verified';
+        },
+        onMapClick: (lat, lon) => {
+          // If clicked inside Jezero EVA sector, route & inspect; otherwise inspect planetary coordinates
+          const inJezero = lat >= 18.25 && lat <= 18.65 && lon >= 77.20 && lon <= 77.70;
+          if (inJezero) {
+            onSurfaceTargetSelected(lat, lon, false);
+          } else {
+            updateInspector(lat, lon);
+          }
+        }
+      });
     } catch (e) {
-      console.warn("Three.js 3D Viewport error:", e);
+      console.warn('3D Globe initialization error:', e);
     }
 
-    // Compute Initial Route
     calculateAndRenderRoute();
+    setViewMode('orbital');
+  }
+
+  function updateCursorHUD(lat, lon) {
+    const latDir = lat >= 0 ? 'N' : 'S';
+    const lonDir = lon >= 0 ? 'E' : 'W';
+    document.getElementById('hudCursorCoords').textContent =
+      `LAT: ${Math.abs(lat).toFixed(4)}° ${latDir} | LON: ${Math.abs(lon).toFixed(4)}° ${lonDir}`;
   }
 
   // --------------------------------------------------------------------------
-  // 2. Basemap Switcher
+  // 2. Hybrid View Mode Switcher ('orbital' 3D Globe <-> 'surface' 2D Map)
+  // --------------------------------------------------------------------------
+  function setViewMode(mode) {
+    viewMode = mode;
+    const globeEl = document.getElementById('globeView');
+    const btnJezero = document.getElementById('btnFlyJezero');
+    const btnOrbital = document.getElementById('btnFlyOrbital');
+
+    if (mode === 'surface') {
+      globeEl.classList.add('hidden-view');
+      btnJezero.classList.add('btn-primary');
+      btnJezero.classList.remove('btn-view3d');
+      btnOrbital.classList.remove('btn-primary');
+      btnOrbital.classList.add('btn-secondary');
+      setTimeout(() => {
+        if (map) map.invalidateSize();
+      }, 80);
+    } else {
+      globeEl.classList.remove('hidden-view');
+      btnOrbital.classList.add('btn-primary');
+      btnOrbital.classList.remove('btn-secondary');
+      btnJezero.classList.remove('btn-primary');
+      btnJezero.classList.add('btn-view3d');
+      if (globe) {
+        globe.onResize();
+        globe.flyToOrbital();
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. Basemap Switcher (Both 2D Leaflet + 3D Globe)
   // --------------------------------------------------------------------------
   function setBasemap(type) {
-    if (currentBasemap) {
+    if (currentBasemap && map) {
       map.removeLayer(currentBasemap);
     }
 
-    if (type === 'openplanetary') {
-      currentBasemap = L.tileLayer('https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-2/all/{z}/{x}/{y}.png', {
-        maxZoom: 16,
-        subdomains: 'abcd'
-      });
-    } else if (type === 'satellite') {
-      currentBasemap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 16
-      });
+    const group = L.layerGroup();
+
+    if (type === 'hirise') {
+      group.addLayer(L.tileLayer('https://s3-eu-west-1.amazonaws.com/whereonmars.cartodb.net/viking_mdim21_global/{z}/{x}/{y}.png', {
+        maxNativeZoom: 7,
+        maxZoom: 18,
+        zIndex: 1,
+        className: 'viking-underlay-tile'
+      }));
+      group.addLayer(L.tileLayer('https://mars.nasa.gov/mmgis-maps/M20/Layers/M20_HiRISE_RGB_mosaic_25cm_v4p2/{z}/{x}/{y}.png', {
+        tms: true,
+        minNativeZoom: 11,
+        maxNativeZoom: 16,
+        maxZoom: 18,
+        zIndex: 2
+      }));
+      group.addLayer(L.tileLayer('https://mars.nasa.gov/mmgis-maps/M20/Layers/M20_Placenames_175k_800dpi/{z}/{x}/{y}.png', {
+        tms: true,
+        minNativeZoom: 11,
+        maxNativeZoom: 16,
+        maxZoom: 18,
+        zIndex: 3,
+        opacity: 0.55
+      }));
+    } else if (type === 'viking') {
+      group.addLayer(L.tileLayer('https://s3-eu-west-1.amazonaws.com/whereonmars.cartodb.net/viking_mdim21_global/{z}/{x}/{y}.png', {
+        maxNativeZoom: 7,
+        maxZoom: 18,
+        zIndex: 1
+      }));
+    } else if (type === 'mola-color') {
+      group.addLayer(L.tileLayer('https://s3-eu-west-1.amazonaws.com/whereonmars.cartodb.net/mola-color/{z}/{x}/{y}.png', {
+        maxNativeZoom: 6,
+        maxZoom: 18,
+        zIndex: 1
+      }));
     } else {
-      // USGS MOLA Shaded Relief
-      currentBasemap = L.tileLayer('https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-2/all/{z}/{x}/{y}.png', {
-        maxZoom: 16,
-        className: 'tactical-relief-filter'
-      });
+      group.addLayer(L.tileLayer('https://s3.us-east-2.amazonaws.com/opmmarstiles/hillshade-tiles/{z}/{x}/{y}.png', {
+        maxNativeZoom: 6,
+        maxZoom: 18,
+        zIndex: 1
+      }));
     }
 
+    currentBasemap = group;
     currentBasemap.addTo(map);
-    currentBasemap.bringToBack();
+
+    if (globe) {
+      globe.loadGlobalBasemapTexture(type);
+    }
   }
 
   // --------------------------------------------------------------------------
-  // 3. Setup All 7 NASA Data Modalities
+  // 4. Setup All 7 NASA Data Modalities (2D Leaflet - High-Contrast Color Coding)
   // --------------------------------------------------------------------------
-
-  // 1. HiRISE Slope Hazards
   function setupHazardLayer() {
     hazardLayerGroup.clearLayers();
     L.geoJSON(data.hazardsGeoJSON, {
       style: (feature) => {
-        const type = feature.properties.hazardType;
-        if (type === 'cliff') {
-          return { color: '#ff2a4b', weight: 2.5, fillColor: '#ff2a4b', fillOpacity: 0.45, dashArray: '4, 4' };
-        } else if (type === 'safe_corridor') {
-          return { color: '#00ff9d', weight: 2, fillColor: '#00ff9d', fillOpacity: 0.25 };
-        } else {
-          return { color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.35 };
-        }
+        const isCritical = feature.properties.riskLevel === 'CRITICAL';
+        return {
+          color: isCritical ? '#ff2a4b' : '#00ff9d',
+          weight: isCritical ? 3 : 2.5,
+          opacity: 0.95,
+          fillColor: isCritical ? '#ff2a4b' : '#00ff9d',
+          fillOpacity: isCritical ? 0.48 : 0.35,
+          dashArray: isCritical ? '6, 4' : null
+        };
       },
       onEachFeature: (feature, layer) => {
         const p = feature.properties;
-        layer.bindPopup(`
-          <div class="popup-title">⚠ ${p.riskLevel}: ${p.hazardType.toUpperCase()}</div>
-          <div class="popup-desc">${p.desc}</div>
-          <div class="popup-science-badge">Slope: ${p.slope}</div>
-          <div class="popup-science-badge" style="margin-left:4px;color:#798b9f;">${p.provenance}</div>
-        `);
+        const isCritical = p.riskLevel === 'CRITICAL';
+        layer.bindTooltip(`
+          <div style="font-family:'Share Tech Mono',monospace;font-size:11px;">
+            <strong style="color:${isCritical ? '#ff2a4b' : '#00ff9d'}">${isCritical ? 'CLIFF WALL HAZARD' : 'SAFE INGRESS CORRIDOR'}</strong><br>
+            Slope: ${p.slope} | Status: ${p.riskLevel}<br>
+            ${p.desc}
+          </div>
+        `, { sticky: true });
       }
     }).addTo(hazardLayerGroup);
   }
 
-  // 2. THEMIS Thermal Inertia & Sand Traps
   function setupThemisLayer() {
     themisLayerGroup.clearLayers();
     L.geoJSON(data.themisSandTrapsGeoJSON, {
       style: () => ({
         color: '#fb923c',
-        weight: 2,
-        fillColor: '#ea580c',
-        fillOpacity: 0.4,
-        dashArray: '3, 6'
+        weight: 2.5,
+        opacity: 0.92,
+        fillColor: '#f97316',
+        fillOpacity: 0.40,
+        dashArray: '6, 4'
       }),
       onEachFeature: (feature, layer) => {
         const p = feature.properties;
-        layer.bindPopup(`
-          <div class="popup-title" style="color:#fb923c">🏜 ${p.riskLevel}</div>
-          <div class="popup-desc">${p.desc}</div>
-          <div class="popup-science-badge">Thermal Inertia: ${p.thermalInertia}</div>
-          <div class="popup-science-badge" style="margin-left:4px;color:#798b9f;">${p.provenance}</div>
-        `);
+        layer.bindTooltip(`
+          <div style="font-family:'Share Tech Mono',monospace;font-size:11px;">
+            <strong style="color:#fb923c">THEMIS SAND TRAP</strong><br>
+            Thermal Inertia: ${p.thermalInertia}<br>
+            Risk: ${p.riskLevel}<br>
+            ${p.desc}
+          </div>
+        `, { sticky: true });
       }
     }).addTo(themisLayerGroup);
   }
 
-  // 3. CRISM Spectral Mineralogy & Biosignatures
   function setupMineralLayer() {
     mineralLayerGroup.clearLayers();
     L.geoJSON(data.mineralsGeoJSON, {
-      style: (feature) => ({
-        color: feature.properties.colorCode,
-        weight: 2,
-        fillColor: feature.properties.colorCode,
-        fillOpacity: 0.35
-      }),
-      onEachFeature: (feature, layer) => {
-        const p = feature.properties;
-        layer.bindPopup(`
-          <div class="popup-title" style="color:${p.colorCode}">🔬 ${p.mineral}</div>
-          <div class="popup-desc">${p.significance}</div>
-          <div class="popup-science-badge">Absorption: ${p.spectralBand}</div>
-          <div class="popup-science-badge" style="margin-left:4px;color:#798b9f;">Unit: ${p.unit}</div>
-        `);
-      }
-    }).addTo(mineralLayerGroup);
-  }
-
-  // 4. MEDA & RAD Thermal Shadows & Radiation Ridges
-  function setupThermalLayer() {
-    thermalLayerGroup.clearLayers();
-    L.geoJSON(data.environmentGeoJSON, {
       style: (feature) => {
-        const isCryo = feature.properties.envType === 'cryo_shadow';
+        const col = feature.properties.colorCode || '#00f0ff';
         return {
-          color: isCryo ? '#c084fc' : '#f43f5e',
-          weight: 2,
-          fillColor: isCryo ? '#a855f7' : '#e11d48',
-          fillOpacity: 0.35,
-          dashArray: '6, 6'
+          color: col,
+          weight: 2.5,
+          opacity: 0.95,
+          fillColor: col,
+          fillOpacity: 0.40
         };
       },
       onEachFeature: (feature, layer) => {
         const p = feature.properties;
-        layer.bindPopup(`
-          <div class="popup-title">🌡 ${p.envType === 'cryo_shadow' ? 'CRYOGENIC COLD TRAP' : 'RADIATION RIDGE'}</div>
-          <div class="popup-desc">${p.desc}</div>
-          <div class="popup-science-badge">${p.tempRating || p.doseRate}</div>
-        `);
+        const col = p.colorCode || '#00f0ff';
+        layer.bindTooltip(`
+          <div style="font-family:'Share Tech Mono',monospace;font-size:11px;">
+            <strong style="color:${col}">${p.mineral}</strong><br>
+            Unit: ${p.unit} (${p.spectralBand})<br>
+            ${p.significance}
+          </div>
+        `, { sticky: true });
+      }
+    }).addTo(mineralLayerGroup);
+  }
+
+  function setupThermalLayer() {
+    thermalLayerGroup.clearLayers();
+    L.geoJSON(data.environmentGeoJSON, {
+      style: (feature) => {
+        const col = feature.properties.envType === 'cryo_shadow' ? '#a855f7' : '#818cf8';
+        return {
+          color: col,
+          weight: 2.5,
+          opacity: 0.95,
+          fillColor: col,
+          fillOpacity: 0.40,
+          dashArray: '4, 4'
+        };
+      },
+      onEachFeature: (feature, layer) => {
+        const p = feature.properties;
+        const col = p.envType === 'cryo_shadow' ? '#c084fc' : '#818cf8';
+        layer.bindTooltip(`
+          <div style="font-family:'Share Tech Mono',monospace;font-size:11px;">
+            <strong style="color:${col}">${p.envType === 'cryo_shadow' ? 'MEDA CRYOGENIC SHADOW' : 'RADIATION EXPOSURE RIDGE'}</strong><br>
+            ${p.tempRating || p.doseRate}<br>
+            ${p.desc}
+          </div>
+        `, { sticky: true });
       }
     }).addTo(thermalLayerGroup);
   }
 
-  // 5. Perseverance Ground-Truth Rover Traverse
   function setupTraverseLayer() {
     traverseLayerGroup.clearLayers();
     const poly = L.polyline(data.perseveranceTraverse, {
       color: '#fbbf24',
-      weight: 3,
-      opacity: 0.85,
-      dashArray: '5, 8'
+      weight: 3.5,
+      opacity: 0.95,
+      dashArray: '8, 6'
     }).addTo(traverseLayerGroup);
-
-    poly.bindTooltip("Perseverance Rover Ground-Truth Traverse Corridor", { sticky: true });
+    poly.bindTooltip('Perseverance Rover Ground-Truth Traverse (Sol 0–1324)', { sticky: true });
   }
 
-  // 6. NASA Waypoints & Base Camp
-  function setupWaypointMarkers() {
-    waypointLayerGroup.clearLayers();
-    data.waypoints.forEach(wp => {
-      const isBase = wp.type === 'base';
-      const icon = L.divIcon({
-        className: 'tactical-marker',
-        html: `
-          <div class="marker-pin ${isBase ? 'base' : 'science'}">
-            ${isBase ? '⬢' : '✦'}
-          </div>
-        `,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11]
-      });
-
-      const marker = L.marker(wp.coords, { icon });
-
-      // Directional non-overlapping tooltip offsets to eliminate label collision
-      let tooltipDirection = 'top';
-      let tooltipOffset = [0, -14];
-      if (wp.id === 'base_camp') {
-        tooltipDirection = 'right';
-        tooltipOffset = [14, 0];
-      } else if (wp.id === 'seitah') {
-        tooltipDirection = 'bottom';
-        tooltipOffset = [0, 14];
-      } else if (wp.id === 'kodiak') {
-        tooltipDirection = 'left';
-        tooltipOffset = [-14, 0];
-      } else if (wp.id === 'belva') {
-        tooltipDirection = 'left';
-        tooltipOffset = [-14, 0];
-      } else if (wp.id === 'neretva') {
-        tooltipDirection = 'top';
-        tooltipOffset = [0, -14];
-      } else if (wp.id === 'margin') {
-        tooltipDirection = 'top';
-        tooltipOffset = [0, -14];
-      }
-
-      marker.bindTooltip(wp.name.split('(')[0].trim(), {
-        permanent: true,
-        direction: tooltipDirection,
-        offset: tooltipOffset,
-        className: `tactical-tooltip ${isBase ? 'base-tooltip' : 'science-tooltip'}`
-      });
-
-      marker.bindPopup(`
-        <div class="popup-title">${wp.name}</div>
-        <div class="popup-desc">${wp.description}</div>
-        <div class="popup-science-badge">${wp.scienceTarget}</div>
-        <div style="margin-top:8px;">
-          <button class="hud-btn btn-primary" onclick="window.selectWaypointAsDestination('${wp.id}')" style="width:100%;font-size:9.5px;padding:4px 8px;">
-            SET AS ROUTE TARGET
-          </button>
-        </div>
-      `);
-      marker.addTo(waypointLayerGroup);
-    });
-  }
-
-  // 7. Topographic 10m Elevation Contours
   function setupContourLayer() {
     contourLayerGroup.clearLayers();
     data.contours.forEach(c => {
       const line = L.polyline(c.coords, {
-        color: '#64748b',
+        color: '#e2e8f0',
         weight: 1.5,
-        opacity: 0.6,
-        dashArray: '2, 6'
+        opacity: 0.65,
+        dashArray: '3, 4'
       }).addTo(contourLayerGroup);
-
-      line.bindTooltip(`${c.elevation} m Elevation Contour`, { sticky: true });
+      line.bindTooltip(`Elevation Contour: ${c.elevation}m`, { sticky: true });
     });
   }
 
-  window.selectWaypointAsDestination = function(id) {
-    const wp = data.waypoints.find(w => w.id === id);
+  function setupWaypointMarkers() {
+    waypointLayerGroup.clearLayers();
+    const labelPlacements = {
+      base_camp: { direction: 'right', offset: [16, 0] },
+      kodiak: { direction: 'bottom', offset: [0, 18] },
+      neretva: { direction: 'top', offset: [0, -18] },
+      margin: { direction: 'top', offset: [0, -16] },
+      seitah: { direction: 'left', offset: [-16, 10] },
+      belva: { direction: 'left', offset: [-16, 0] }
+    };
+
+    data.waypoints.forEach(wp => {
+      const isBase = wp.type === 'base';
+      const placement = labelPlacements[wp.id] || { direction: 'top', offset: [0, -14] };
+
+      const icon = L.divIcon({
+        className: 'tactical-marker',
+        html: `<div class="marker-pin ${isBase ? 'base-pin' : ''}">${isBase ? '⛺' : '🔬'}</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
+      });
+
+      const marker = L.marker(wp.coords, { icon }).addTo(waypointLayerGroup);
+
+      marker.bindTooltip(wp.name.split('(')[0].trim(), {
+        permanent: true,
+        direction: placement.direction,
+        offset: placement.offset,
+        className: `tactical-wp-tooltip ${isBase ? 'base-tooltip' : ''}`
+      });
+
+      marker.bindPopup(`
+        <div style="font-family:'Share Tech Mono',monospace;min-width:220px;">
+          <h4 style="color:${isBase ? '#00ff9d' : '#00f0ff'};margin-bottom:4px;">${wp.name}</h4>
+          <p style="font-size:11px;color:#cbd5e1;margin-bottom:6px;">${wp.description}</p>
+          <div style="font-size:10px;color:#94a3b8;line-height:1.5;">
+            <strong>Elev:</strong> ${wp.elevation}m | <strong>Slope:</strong> ${wp.slope}°<br>
+            <strong>Mineral:</strong> ${wp.mineral}<br>
+            <strong>Temp:</strong> ${wp.temp} | <strong>Rad:</strong> ${wp.radiation}<br>
+            <strong>Target:</strong> <span style="color:#fbbf24;">${wp.scienceTarget}</span>
+          </div>
+          <button onclick="window.setRouteDestination('${wp.id}')" style="margin-top:8px;width:100%;padding:5px;background:#00f0ff;color:#000;border:none;font-weight:bold;cursor:pointer;border-radius:2px;">
+            PLOT A* ROUTE HERE
+          </button>
+        </div>
+      `);
+
+      marker.on('click', () => {
+        audio.playClick();
+        updateInspector(wp.coords[0], wp.coords[1]);
+      });
+    });
+  }
+
+  function selectWaypoint(wp) {
     if (!wp) return;
-    document.getElementById('routeDestination').value = id;
     currentEnd = [...wp.coords];
-    audio.playClick();
+    customDestCoord = null;
+    if (customWaypointMarker && map) {
+      map.removeLayer(customWaypointMarker);
+      customWaypointMarker = null;
+    }
+    const destSel = document.getElementById('routeDestination');
+    if (destSel) destSel.value = wp.id;
     updateInspector(wp.coords[0], wp.coords[1]);
     calculateAndRenderRoute();
+    if (map) {
+      map.setView(wp.coords, Math.max(map.getZoom(), 13));
+    }
+  }
+
+  window.setRouteDestination = (wpId) => {
+    const wp = data.waypoints.find(w => w.id === wpId);
+    if (wp) {
+      selectWaypoint(wp);
+      if (map) map.closePopup();
+    }
   };
 
   // --------------------------------------------------------------------------
-  // 4. Terrain & Microclimate Inspector
+  // 5. Terrain & Microclimate Inspector
   // --------------------------------------------------------------------------
   function updateInspector(lat, lon) {
     const elev = Math.round(pathfinder.getElevation(lat, lon));
-    
-    // Check hazard polygons
-    let slopeDesc = "2.5° (Safe Flat)";
-    let soilDesc = "Consolidated Bedrock (1.0x)";
-    let mineralDesc = "Basaltic Regolith / Volcanic Floor";
-    let tempDesc = `${data.medaSnapshot.airTemp} (Nominal)`;
-    let radDesc = "0.24 mSv/day (GCR Baseline)";
 
-    // Hazards check
+    let slopeDesc = '2.5° (Safe Flat)';
+    let soilDesc = 'Consolidated Bedrock (1.0x)';
+    let mineralDesc = 'Basaltic Regolith / Volcanic Floor';
+    let tempDesc = `${data.medaSnapshot.airTemp} (Nominal)`;
+    let radDesc = '0.24 mSv/day (GCR Baseline)';
+
     for (const f of data.hazardsGeoJSON.features) {
       if (pathfinder.pointInPolygon([lat, lon], f.geometry.coordinates[0])) {
         if (f.properties.hazardType === 'cliff') {
@@ -334,21 +469,18 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // THEMIS check
     for (const f of data.themisSandTrapsGeoJSON.features) {
       if (pathfinder.pointInPolygon([lat, lon], f.geometry.coordinates[0])) {
         soilDesc = `Aeolian Dune Sand (${f.properties.riskLevel})`;
       }
     }
 
-    // CRISM check
     for (const f of data.mineralsGeoJSON.features) {
       if (pathfinder.pointInPolygon([lat, lon], f.geometry.coordinates[0])) {
         mineralDesc = `${f.properties.mineral} [${f.properties.unit}]`;
       }
     }
 
-    // Thermal / Rad check
     for (const f of data.environmentGeoJSON.features) {
       if (pathfinder.pointInPolygon([lat, lon], f.geometry.coordinates[0])) {
         if (f.properties.envType === 'cryo_shadow') {
@@ -359,95 +491,86 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    document.getElementById('inspCoords').textContent = `${lat.toFixed(4)}° N, ${lon.toFixed(4)}° E`;
+    const latDir = lat >= 0 ? 'N' : 'S';
+    const lonDir = lon >= 0 ? 'E' : 'W';
+    document.getElementById('inspCoords').textContent = `${Math.abs(lat).toFixed(4)}° ${latDir}, ${Math.abs(lon).toFixed(4)}° ${lonDir}`;
     document.getElementById('inspElev').textContent = `${elev} m`;
     document.getElementById('inspSlope').textContent = slopeDesc;
     document.getElementById('inspSoil').textContent = soilDesc;
     document.getElementById('inspMineral').textContent = mineralDesc;
     document.getElementById('inspTemp').textContent = tempDesc;
     document.getElementById('inspRad').textContent = radDesc;
-    document.getElementById('inspProv').textContent = "NASA MGS/MRO/M2020 Multi-Mission Verified";
+    document.getElementById('inspProv').textContent = 'NASA MGS/MRO/M2020 Multi-Mission Verified';
   }
 
-  function onMapMouseMove(e) {
-    const lat = e.latlng.lat;
-    const lon = e.latlng.lng;
-    document.getElementById('hudCursorCoords').textContent = `LAT: ${lat.toFixed(4)}° N | LON: ${lon.toFixed(4)}° E`;
-  }
-
-  function onMapClick(e) {
-    const lat = e.latlng.lat;
-    const lon = e.latlng.lng;
-
+  function onSurfaceTargetSelected(lat, lon, createMarker) {
     currentEnd = [lat, lon];
+    customDestCoord = [lat, lon];
     updateInspector(lat, lon);
 
-    if (customWaypointMarker) {
-      map.removeLayer(customWaypointMarker);
+    if (createMarker && map) {
+      if (customWaypointMarker) {
+        map.removeLayer(customWaypointMarker);
+      }
+      const icon = L.divIcon({
+        className: 'tactical-marker',
+        html: `
+          <div class="marker-pin" style="background:#ff2a4b;border-color:#fff;">📍</div>
+          <div class="marker-label">CUSTOM TARGET</div>
+        `,
+        iconSize: [80, 40],
+        iconAnchor: [40, 20]
+      });
+      customWaypointMarker = L.marker([lat, lon], { icon }).addTo(map);
     }
 
-    const icon = L.divIcon({
-      className: 'tactical-marker',
-      html: `
-        <div class="marker-pin" style="background:#ff2a4b;border-color:#fff;">📍</div>
-        <div class="marker-label">CUSTOM TARGET</div>
-      `,
-      iconSize: [80, 40],
-      iconAnchor: [40, 20]
-    });
-
-    customWaypointMarker = L.marker([lat, lon], { icon }).addTo(map);
     audio.playClick();
     calculateAndRenderRoute();
   }
 
   // --------------------------------------------------------------------------
-  // 5. A* Route Calculation & 2D/3D Rendering
+  // 6. A* Route Calculation & 2D/3D Synchronized Rendering
   // --------------------------------------------------------------------------
   function calculateAndRenderRoute() {
     audio.playClick();
 
-    if (activeRouteLayer) map.removeLayer(activeRouteLayer);
-    if (comparisonStraightLine) map.removeLayer(comparisonStraightLine);
+    if (activeRouteLayer && map) map.removeLayer(activeRouteLayer);
+    if (comparisonStraightLine && map) map.removeLayer(comparisonStraightLine);
 
     const route = pathfinder.findSafeRoute(currentStart, currentEnd);
+    const isSolarEmergency = telemetry.solarStormActive;
 
-    // Dotted straight line if detour exists
-    if (route.detourKm > 0.15) {
-      comparisonStraightLine = L.polyline([currentStart, currentEnd], {
-        color: 'rgba(255, 42, 75, 0.45)',
-        weight: 2,
-        dashArray: '4, 8'
+    if (map) {
+      if (route.detourKm > 0.15) {
+        comparisonStraightLine = L.polyline([currentStart, currentEnd], {
+          color: 'rgba(255, 42, 75, 0.45)',
+          weight: 2,
+          dashArray: '4, 8'
+        }).addTo(map);
+        comparisonStraightLine.bindTooltip('Straight Line (Cliff Hazard Blocked)', { sticky: true });
+      }
+
+      const latLngs = route.coordinates.map(c => [c.lat, c.lon]);
+      const routeColor = isSolarEmergency ? '#ff2a4b' : '#00f0ff';
+
+      activeRouteLayer = L.polyline(latLngs, {
+        color: routeColor,
+        weight: 4.5,
+        opacity: 0.95,
+        lineCap: 'round',
+        lineJoin: 'round'
       }).addTo(map);
-      comparisonStraightLine.bindTooltip(`Straight Line (Cliff Hazard Blocked)`, { sticky: true });
     }
 
-    const latLngs = route.coordinates.map(c => [c.lat, c.lon]);
-    const isSolarEmergency = telemetry.solarStormActive;
-    const routeColor = isSolarEmergency ? '#ff2a4b' : '#00f0ff';
+    if (globe) {
+      globe.renderRoute(route, currentStart, currentEnd, isSolarEmergency, customDestCoord);
+    }
 
-    activeRouteLayer = L.polyline(latLngs, {
-      color: routeColor,
-      weight: 4.5,
-      opacity: 0.95,
-      lineCap: 'round',
-      lineJoin: 'round'
-    }).addTo(map);
-
-    // Compute Life Support Telemetry
     const tData = telemetry.compute(route, false, false);
-
-    // Update HUD Metrics
     updateHUDTelemetry(tData, route);
 
-    // Update 2D Elevation Canvas
     const canvas = document.getElementById('elevationCanvas');
     telemetry.drawElevationProfile(canvas, route.coordinates);
-
-    // Update Synchronized 3D Terrain Route
-    if (terrain3D) {
-      terrain3D.updateRoute(route.coordinates, isSolarEmergency);
-    }
 
     audio.playRoutePlotted();
   }
@@ -487,7 +610,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --------------------------------------------------------------------------
-  // 6. UI Controls & Event Listeners
+  // 7. UI Controls & Event Listeners
   // --------------------------------------------------------------------------
   document.getElementById('routeOrigin').addEventListener('change', (e) => {
     const wp = data.waypoints.find(w => w.id === e.target.value);
@@ -500,50 +623,73 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('routeDestination').addEventListener('change', (e) => {
     const wp = data.waypoints.find(w => w.id === e.target.value);
     if (wp) {
-      currentEnd = [...wp.coords];
-      if (customWaypointMarker) {
-        map.removeLayer(customWaypointMarker);
-        customWaypointMarker = null;
-      }
-      updateInspector(wp.coords[0], wp.coords[1]);
-      calculateAndRenderRoute();
+      selectWaypoint(wp);
     }
   });
 
-  document.getElementById('btnCalculateRoute').addEventListener('click', calculateAndRenderRoute);
+  document.getElementById('btnCalculateRoute').addEventListener('click', () => {
+    calculateAndRenderRoute();
+  });
 
   document.getElementById('btnClearRoute').addEventListener('click', () => {
+    audio.playClick();
+    customDestCoord = null;
+    if (customWaypointMarker && map) {
+      map.removeLayer(customWaypointMarker);
+      customWaypointMarker = null;
+    }
+    if (activeRouteLayer && map) map.removeLayer(activeRouteLayer);
+    if (comparisonStraightLine && map) map.removeLayer(comparisonStraightLine);
+    if (globe) globe.clearRoute();
+
     currentStart = [...data.waypoints[0].coords];
     currentEnd = [...data.waypoints[1].coords];
     document.getElementById('routeOrigin').value = 'base_camp';
     document.getElementById('routeDestination').value = 'kodiak';
-    if (customWaypointMarker) {
-      map.removeLayer(customWaypointMarker);
-      customWaypointMarker = null;
-    }
     telemetry.setSolarStorm(false);
-    updateInspector(currentStart[0], currentStart[1]);
     calculateAndRenderRoute();
   });
 
-  // Layer Toggles
-  const setupToggle = (id, group) => {
-    document.getElementById(id).addEventListener('change', (e) => {
-      if (e.target.checked) map.addLayer(group);
-      else map.removeLayer(group);
+  // View Mode Buttons (3D Mars Globe <-> 2D HiRISE Jezero EVA)
+  document.getElementById('btnFlyJezero').addEventListener('click', () => {
+    audio.playClick();
+    if (viewMode === 'orbital' && globe) {
+      globe.flyToJezeroAndEnter();
+    } else {
+      setViewMode('surface');
+      if (map) map.setView(data.center, data.defaultZoom);
+    }
+  });
+
+  document.getElementById('btnFlyOrbital').addEventListener('click', () => {
+    audio.playClick();
+    setViewMode('orbital');
+  });
+
+  // 7 NASA Data Layer Toggles (Synced to both 2D Leaflet & 3D Globe)
+  const setupToggle = (checkboxId, leafletGroup, globeKey) => {
+    const el = document.getElementById(checkboxId);
+    if (!el) return;
+    el.addEventListener('change', (e) => {
       audio.playClick();
+      if (e.target.checked) {
+        map.addLayer(leafletGroup);
+      } else {
+        map.removeLayer(leafletGroup);
+      }
+      if (globe) globe.setLayerVisible(globeKey, e.target.checked);
     });
   };
 
-  setupToggle('layerHazards', hazardLayerGroup);
-  setupToggle('layerThemis', themisLayerGroup);
-  setupToggle('layerMinerals', mineralLayerGroup);
-  setupToggle('layerThermal', thermalLayerGroup);
-  setupToggle('layerTraverse', traverseLayerGroup);
-  setupToggle('layerWaypoints', waypointLayerGroup);
-  setupToggle('layerContours', contourLayerGroup);
+  setupToggle('layerHazards', hazardLayerGroup, 'hazards');
+  setupToggle('layerThemis', themisLayerGroup, 'themis');
+  setupToggle('layerMinerals', mineralLayerGroup, 'minerals');
+  setupToggle('layerThermal', thermalLayerGroup, 'thermal');
+  setupToggle('layerTraverse', traverseLayerGroup, 'traverse');
+  setupToggle('layerWaypoints', waypointLayerGroup, 'waypoints');
+  setupToggle('layerContours', contourLayerGroup, 'contours');
 
-  // Layer Opacity Sliders
+  // Layer Opacity Sliders (Synced to both 2D Leaflet & 3D Globe)
   const applyGroupOpacity = (group, factor) => {
     group.eachLayer(layer => {
       if (typeof layer.setStyle === 'function') {
@@ -557,21 +703,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   };
 
-  const setupOpacity = (sliderId, layerGroup) => {
+  const setupOpacity = (sliderId, leafletGroup, globeKey) => {
     const slider = document.getElementById(sliderId);
     if (!slider) return;
     slider.addEventListener('input', (e) => {
       const factor = parseFloat(e.target.value) / 100;
-      applyGroupOpacity(layerGroup, factor);
+      applyGroupOpacity(leafletGroup, factor);
+      if (globe) globe.setLayerOpacity(globeKey, factor);
     });
   };
 
-  setupOpacity('opacityHazards', hazardLayerGroup);
-  setupOpacity('opacityThemis', themisLayerGroup);
-  setupOpacity('opacityMinerals', mineralLayerGroup);
-  setupOpacity('opacityThermal', thermalLayerGroup);
-  setupOpacity('opacityTraverse', traverseLayerGroup);
-  setupOpacity('opacityContours', contourLayerGroup);
+  setupOpacity('opacityHazards', hazardLayerGroup, 'hazards');
+  setupOpacity('opacityThemis', themisLayerGroup, 'themis');
+  setupOpacity('opacityMinerals', mineralLayerGroup, 'minerals');
+  setupOpacity('opacityThermal', thermalLayerGroup, 'thermal');
+  setupOpacity('opacityTraverse', traverseLayerGroup, 'traverse');
+  setupOpacity('opacityContours', contourLayerGroup, 'contours');
 
   // Floating Collapsible HUD Drawers (Left & Right)
   const leftDrawer = document.getElementById('leftDrawer');
@@ -607,44 +754,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // 3D Viewport Controls
-  const panel3D = document.getElementById('terrain3dPanel');
-  const btnToggle3D = document.getElementById('btnToggle3D');
-
-  btnToggle3D.addEventListener('click', () => {
-    panel3D.classList.toggle('closed');
-    const isClosed = panel3D.classList.contains('closed');
-    btnToggle3D.textContent = isClosed ? '🌐 3D TERRAIN: OFF' : '🌐 3D TERRAIN: ON';
-    if (!isClosed && terrain3D) {
-      setTimeout(() => terrain3D.onResize(), 60);
-    }
-    audio.playClick();
-  });
-
-  document.getElementById('btnClose3D').addEventListener('click', () => {
-    panel3D.classList.add('closed');
-    btnToggle3D.textContent = '🌐 3D TERRAIN: OFF';
-    audio.playClick();
-  });
-
-  document.getElementById('btnReset3DCamera').addEventListener('click', () => {
-    if (terrain3D) terrain3D.resetCamera();
-    audio.playClick();
-  });
-
-  document.getElementById('btnToggle3DRotate').addEventListener('click', () => {
-    if (terrain3D) {
-      const active = terrain3D.toggleAutoRotate();
-      document.getElementById('btnToggle3DRotate').style.color = active ? 'var(--hud-cyan)' : 'var(--text-dim)';
-    }
-    audio.playClick();
-  });
-
   // Audio Toggle
   document.getElementById('btnToggleAudio').addEventListener('click', () => {
     const isEnabled = audio.toggle();
-    document.getElementById('audioIcon').textContent = isEnabled ? '🔊' : '🔇';
-    document.getElementById('btnToggleAudio').innerHTML = `<span id="audioIcon">${isEnabled ? '🔊' : '🔇'}</span> SFX: ${isEnabled ? 'ON' : 'OFF'}`;
+    document.getElementById('btnToggleAudio').innerHTML =
+      `<span id="audioIcon">${isEnabled ? '🔊' : '🔇'}</span> SFX: ${isEnabled ? 'ON' : 'OFF'}`;
   });
 
   // Emergency SPE Modal
@@ -680,7 +794,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tData = telemetry.compute(route);
 
     const logData = {
-      mission: "ARES-V EVA-77 JEZERO SECTOR",
+      mission: 'ARES-V EVA-77 JEZERO SECTOR',
       sol: 1324,
       mtc: getFormattedMTC(),
       origin: currentStart,
@@ -701,7 +815,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `EVA_77_FLIGHT_PLAN_SOL1324.json`;
+    a.download = 'EVA_77_FLIGHT_PLAN_SOL1324.json';
     a.click();
     URL.revokeObjectURL(url);
   });
@@ -718,7 +832,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hudMTC').textContent = getFormattedMTC();
   }, 1000);
 
-  // Initialize Map
-  initMap();
+  // Initialize Hybrid 3D Globe + 2D HiRISE Tactical Map
+  initMaps();
   updateInspector(currentStart[0], currentStart[1]);
 });

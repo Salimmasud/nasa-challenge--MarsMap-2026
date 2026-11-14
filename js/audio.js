@@ -10,10 +10,22 @@ class TacticalAudioEngine {
   constructor() {
     this.audioCtx = null;
     this.enabled = true;
+    this.unlocked = false;
     this.geigerInterval = null;
+
+    if (typeof window !== 'undefined') {
+      const unlock = () => {
+        this.unlocked = true;
+        this.init();
+      };
+      ['pointerdown', 'keydown', 'click'].forEach(evt => {
+        window.addEventListener(evt, unlock, { once: true, passive: true });
+      });
+    }
   }
 
   init() {
+    if (!this.unlocked) return;
     if (!this.audioCtx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (AudioContext) {
@@ -21,7 +33,7 @@ class TacticalAudioEngine {
       }
     }
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
+      this.audioCtx.resume().catch(() => {});
     }
   }
 
