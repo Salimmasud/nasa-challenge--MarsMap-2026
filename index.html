@@ -28,7 +28,7 @@
       </div>
       <div class="mission-title-group">
         <h1 class="glitch-text">ARES-V // MARSWALK TACTICAL SURVIVAL GUIDE</h1>
-        <div class="mission-subtitle">Perseverance Sector • Western Delta & Carbonate Margin Exploration • 18.38°N, 77.58°E</div>
+        <div class="mission-subtitle">Perseverance Sector • Western Delta &amp; Carbonate Margin Exploration • 18.38°N, 77.58°E</div>
       </div>
     </div>
 
@@ -256,6 +256,31 @@
         </div>
         <div class="panel-body">
           
+          <!-- Top Row: Primary O2 & Battery Gauges immediately visible -->
+          <div class="resource-meters resource-meters-top">
+            <div class="meter-row">
+              <div class="meter-info">
+                <span class="meter-name">PRIMARY O₂ (PLSS)</span>
+                <span class="meter-val" id="meterO2Val">87%</span>
+              </div>
+              <div class="meter-track">
+                <div class="meter-fill o2-fill" id="meterO2Fill" style="width: 87%;"></div>
+              </div>
+              <div class="meter-sub">0.28 L/min (Nominal)</div>
+            </div>
+
+            <div class="meter-row">
+              <div class="meter-info">
+                <span class="meter-name">SUIT BATTERY</span>
+                <span class="meter-val" id="meterBatteryVal">86%</span>
+              </div>
+              <div class="meter-track">
+                <div class="meter-fill batt-fill" id="meterBatteryFill" style="width: 86%;"></div>
+              </div>
+              <div class="meter-sub">185W Heater Load</div>
+            </div>
+          </div>
+
           <div class="stats-grid">
             <div class="stat-box">
               <div class="stat-lbl">TOTAL DISTANCE</div>
@@ -265,49 +290,35 @@
             <div class="stat-box">
               <div class="stat-lbl">EST. WALK TIME</div>
               <div class="stat-num" id="statTime">58 mins</div>
-              <div class="stat-sub">Mars 0.38g Hiking Pace</div>
+              <div class="stat-sub">Mars 0.38g Pace</div>
             </div>
             <div class="stat-box">
               <div class="stat-lbl">ELEVATION GAIN</div>
               <div class="stat-num" id="statIncline">+61 <span class="unit">m</span></div>
-              <div class="stat-sub">Max Gradient: <span id="statMaxSlope">2.8°</span></div>
+              <div class="stat-sub">Max Slope: <span id="statMaxSlope">2.8°</span></div>
             </div>
             <div class="stat-box">
               <div class="stat-lbl">CUMULATIVE DOSE</div>
               <div class="stat-num" id="statRadiation">0.112 <span class="unit">mSv</span></div>
-              <div class="stat-sub">Limit: 50.0 mSv / EVA</div>
+              <div class="stat-sub">Limit: 50.0 mSv</div>
             </div>
           </div>
 
           <div class="resource-meters">
             <div class="meter-row">
               <div class="meter-info">
-                <span class="meter-name">PRIMARY O₂ SUPPLY (PLSS)</span>
-                <span class="meter-val" id="meterO2Val">87%</span>
-              </div>
-              <div class="meter-track">
-                <div class="meter-fill o2-fill" id="meterO2Fill" style="width: 87%;"></div>
-              </div>
-              <div class="meter-sub">Consumption rate: 0.28 L/min (Nominal)</div>
-            </div>
-
-            <div class="meter-row">
-              <div class="meter-info">
-                <span class="meter-name">SUIT BATTERY &amp; HEATER</span>
-                <span class="meter-val" id="meterBatteryVal">86%</span>
-              </div>
-              <div class="meter-track">
-                <div class="meter-fill batt-fill" id="meterBatteryFill" style="width: 86%;"></div>
-              </div>
-              <div class="meter-sub">Thermal drain: 185W (Nominal)</div>
-            </div>
-
-            <div class="meter-row">
-              <div class="meter-info">
                 <span class="meter-name">IONIZING RADIATION ACCUMULATION</span>
                 <span class="meter-val" id="meterRadVal">0.112 mSv (0.2%)</span>
               </div>
               <div class="meter-track">
+                <div class="meter-fill rad-fill" id="meterRadFill" style="width: 2%;"></div>
+              </div>
+              <div class="meter-sub">Galactic Cosmic Ray background rate</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
                 <div class="meter-fill rad-fill" id="meterRadFill" style="width: 2%;"></div>
               </div>
               <div class="meter-sub">Galactic Cosmic Ray background rate</div>

@@ -234,13 +234,43 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="marker-pin ${isBase ? 'base' : 'science'}">
             ${isBase ? '⬢' : '✦'}
           </div>
-          <div class="marker-label">${wp.name.split('(')[0]}</div>
         `,
-        iconSize: [80, 40],
-        iconAnchor: [40, 20]
+        iconSize: [22, 22],
+        iconAnchor: [11, 11]
       });
 
       const marker = L.marker(wp.coords, { icon });
+
+      // Directional non-overlapping tooltip offsets to eliminate label collision
+      let tooltipDirection = 'top';
+      let tooltipOffset = [0, -14];
+      if (wp.id === 'base_camp') {
+        tooltipDirection = 'right';
+        tooltipOffset = [14, 0];
+      } else if (wp.id === 'seitah') {
+        tooltipDirection = 'bottom';
+        tooltipOffset = [0, 14];
+      } else if (wp.id === 'kodiak') {
+        tooltipDirection = 'left';
+        tooltipOffset = [-14, 0];
+      } else if (wp.id === 'belva') {
+        tooltipDirection = 'left';
+        tooltipOffset = [-14, 0];
+      } else if (wp.id === 'neretva') {
+        tooltipDirection = 'top';
+        tooltipOffset = [0, -14];
+      } else if (wp.id === 'margin') {
+        tooltipDirection = 'top';
+        tooltipOffset = [0, -14];
+      }
+
+      marker.bindTooltip(wp.name.split('(')[0].trim(), {
+        permanent: true,
+        direction: tooltipDirection,
+        offset: tooltipOffset,
+        className: `tactical-tooltip ${isBase ? 'base-tooltip' : 'science-tooltip'}`
+      });
+
       marker.bindPopup(`
         <div class="popup-title">${wp.name}</div>
         <div class="popup-desc">${wp.description}</div>
@@ -528,14 +558,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnToggle3D = document.getElementById('btnToggle3D');
 
   btnToggle3D.addEventListener('click', () => {
-    panel3D.classList.toggle('minimized');
-    const isMinimized = panel3D.classList.contains('minimized');
-    btnToggle3D.textContent = isMinimized ? '🌐 3D TERRAIN: OFF' : '🌐 3D TERRAIN: ON';
+    panel3D.classList.toggle('closed');
+    const isClosed = panel3D.classList.contains('closed');
+    btnToggle3D.textContent = isClosed ? '🌐 3D TERRAIN: OFF' : '🌐 3D TERRAIN: ON';
+    if (!isClosed && terrain3D) {
+      setTimeout(() => terrain3D.onResize(), 60);
+    }
     audio.playClick();
   });
 
   document.getElementById('btnClose3D').addEventListener('click', () => {
-    panel3D.classList.add('minimized');
+    panel3D.classList.add('closed');
     btnToggle3D.textContent = '🌐 3D TERRAIN: OFF';
     audio.playClick();
   });
