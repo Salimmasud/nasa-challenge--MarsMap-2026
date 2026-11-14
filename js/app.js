@@ -543,6 +543,60 @@ document.addEventListener('DOMContentLoaded', () => {
   setupToggle('layerWaypoints', waypointLayerGroup);
   setupToggle('layerContours', contourLayerGroup);
 
+  // Layer Opacity Sliders
+  const applyGroupOpacity = (group, factor) => {
+    group.eachLayer(layer => {
+      if (typeof layer.setStyle === 'function') {
+        layer.setStyle({
+          opacity: Math.min(1, Math.max(0.05, factor)),
+          fillOpacity: Math.min(0.65, Math.max(0.02, factor * 0.45))
+        });
+      } else if (typeof layer.eachLayer === 'function') {
+        applyGroupOpacity(layer, factor);
+      }
+    });
+  };
+
+  const setupOpacity = (sliderId, layerGroup) => {
+    const slider = document.getElementById(sliderId);
+    if (!slider) return;
+    slider.addEventListener('input', (e) => {
+      const factor = parseFloat(e.target.value) / 100;
+      applyGroupOpacity(layerGroup, factor);
+    });
+  };
+
+  setupOpacity('opacityHazards', hazardLayerGroup);
+  setupOpacity('opacityThemis', themisLayerGroup);
+  setupOpacity('opacityMinerals', mineralLayerGroup);
+  setupOpacity('opacityThermal', thermalLayerGroup);
+  setupOpacity('opacityTraverse', traverseLayerGroup);
+  setupOpacity('opacityContours', contourLayerGroup);
+
+  // Floating Collapsible HUD Drawers (Left & Right)
+  const leftDrawer = document.getElementById('leftDrawer');
+  const btnLeftDrawer = document.getElementById('btnToggleLeftDrawer');
+  if (leftDrawer && btnLeftDrawer) {
+    btnLeftDrawer.addEventListener('click', () => {
+      const collapsed = leftDrawer.classList.toggle('drawer-collapsed');
+      document.body.classList.toggle('left-drawer-collapsed', collapsed);
+      btnLeftDrawer.setAttribute('aria-expanded', String(!collapsed));
+      btnLeftDrawer.innerHTML = collapsed ? '&#9654;' : '&#9664;';
+      audio.playClick();
+    });
+  }
+
+  const rightDrawer = document.getElementById('rightDrawer');
+  const btnRightDrawer = document.getElementById('btnToggleRightDrawer');
+  if (rightDrawer && btnRightDrawer) {
+    btnRightDrawer.addEventListener('click', () => {
+      const collapsed = rightDrawer.classList.toggle('drawer-collapsed');
+      btnRightDrawer.setAttribute('aria-expanded', String(!collapsed));
+      btnRightDrawer.innerHTML = collapsed ? '&#9664;' : '&#9654;';
+      audio.playClick();
+    });
+  }
+
   // Basemap Selector
   document.querySelectorAll('.basemap-pill').forEach(btn => {
     btn.addEventListener('click', (e) => {

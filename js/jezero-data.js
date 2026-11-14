@@ -302,6 +302,10 @@ window.JEZERO_DATA = {
           significance: "Hydrothermal / spring precipitation deposit. Exceptional taphonomic preservation potential.",
           provenance: "MRO CRISM / SuperCam Spectral Match"
         },
+
+
+
+        
         geometry: {
           type: "Polygon",
           coordinates: [[
