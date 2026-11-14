@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARES-V // Marswalk EVA Tactical Survival & Route Planner - Jezero Crater</title>
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <!-- Google Fonts: Orbitron, Share Tech Mono, Rajdhani -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  
+  <!-- App Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="theme-mars-tactical">
+  <!-- Scanline / CRT overlay effect -->
+  <div class="crt-overlay" id="crtOverlay"></div>
+
+  <!-- Top Aerospace Mission Banner -->
+  <header class="mission-header">
+    <div class="header-left">
+      <div class="nasa-insignia">
+        <span class="insignia-badge">NASA / JPL</span>
+        <span class="mission-id">EVA-77 // JEZERO TACTICAL NAV</span>
+      </div>
+      <div class="mission-title-group">
+        <h1 class="glitch-text">ARES-V // MARSWALK TACTICAL SURVIVAL GUIDE</h1>
+        <div class="mission-subtitle">Perseverance Sector • Western Delta & Carbonate Margin Exploration • 18.38°N, 77.58°E</div>
+      </div>
+    </div>
+
+    <!-- Live Sol & Mars Atmospheric Telemetry -->
+    <div class="header-center">
+      <div class="telemetry-pill">
+        <span class="pill-label">SOL</span>
+        <span class="pill-val" id="hudSol">1324</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="pill-label">MTC (MARS CLOCK)</span>
+        <span class="pill-val" id="hudMTC">14:42:08</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="pill-label">MEDA TEMP</span>
+        <span class="pill-val warning-amber" id="hudEnvTemp">-62°C</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="pill-label">PRESSURE</span>
+        <span class="pill-val" id="hudPressure">748 Pa</span>
+      </div>
+      <div class="telemetry-pill">
+        <span class="pill-label">DUST (TAU)</span>
+        <span class="pill-val" id="hudDustTau">0.58</span>
+      </div>
+    </div>
+
+    <!-- Header Controls -->
+    <div class="header-right">
+      <button class="hud-btn btn-emergency" id="btnSolarStorm" title="Simulate dangerous Solar Particle Event / Dust Storm">
+        <span class="pulse-icon">⚠</span> SOLAR STORM (SPE)
+      </button>
+      <button class="hud-btn btn-view3d" id="btnToggle3D" title="Toggle Synchronized 3D Jezero Terrain Viewport">
+        🌐 3D TERRAIN: ON
+      </button>
+      <button class="hud-btn btn-audio" id="btnToggleAudio" title="Toggle Tactical Audio Feedback">
+        <span id="audioIcon">🔊</span> SFX: ON
+      </button>
+      <button class="hud-btn btn-secondary" id="btnExportEVA" title="Export Mission EVA Plan">
+        📋 EXPORT PLAN
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Dual-Panel Workspace -->
+  <div class="main-layout">
+    
+    <!-- Left Tactical Map Viewport -->
+    <main class="map-section">
+      <div id="map" class="tactical-map"></div>
+
+      <!-- Map Floating Crosshair & Telemetry HUD -->
+      <div class="map-hud-overlay">
+        <div class="map-badge coords-badge" id="hudCursorCoords">LAT: 18.4447° N | LON: 77.4508° E</div>
+        <div class="map-badge scale-badge">SCALE: 1:25,000 | 0.38G MARTIAN GRAVITY | CRS: EPSG:4326</div>
+      </div>
+
+      <!-- Synchronized 3D Terrain Elevation Viewport (Three.js) -->
+      <div class="terrain-3d-panel" id="terrain3dPanel">
+        <div class="terrain-3d-header">
+          <div class="t3d-title">
+            <span class="pulse-dot"></span> SYNCHRONIZED 3D TERRAIN ELEVATION (HiRISE DTM)
+          </div>
+          <div class="t3d-actions">
+            <button class="t3d-btn" id="btnReset3DCamera" title="Reset Camera View">⟲ RESET</button>
+            <button class="t3d-btn" id="btnToggle3DRotate" title="Toggle Auto-Rotation">🔄 ROTATE</button>
+            <button class="t3d-btn" id="btnClose3D" title="Minimize 3D View">✖</button>
+          </div>
+        </div>
+        <div class="terrain-3d-canvas-wrap" id="terrain3dCanvas"></div>
+        <div class="terrain-3d-footer">
+          <span>Click & Drag to Rotate • Scroll to Zoom • Right-click to Pan</span>
+          <span class="t3d-badge">180m MESH • 0.38G SCALED</span>
+        </div>
+      </div>
+
+      <!-- Floating 7-Modality NASA Layer Dock -->
+      <div class="map-layer-dock">
+        <div class="dock-title">NASA SCIENTIFIC DATA LAYERS (7 MODALITIES)</div>
+        <div class="dock-toggles">
+          <label class="dock-item">
+            <input type="checkbox" id="layerHazards" checked>
+            <span class="dock-indicator red"></span>
+            <span class="dock-text">HiRISE Slope &amp; Cliff Hazards (&gt;15°-20°)</span>
+          </label>
+          <label class="dock-item">
+            <input type="checkbox" id="layerThemis" checked>
+            <span class="dock-indicator orange"></span>
+            <span class="dock-text">THEMIS Thermal Inertia &amp; Sand Traps</span>
+          </label>
+          <label class="dock-item">
+            <input type="checkbox" id="layerMinerals" checked>
+            <span class="dock-indicator cyan"></span>
+            <span class="dock-text">CRISM Mineralogy &amp; Biosignatures</span>
+          </label>
+          <label class="dock-item">
+            <input type="checkbox" id="layerThermal" checked>
+            <span class="dock-indicator purple"></span>
+            <span class="dock-text">MEDA Cold Shadows &amp; GCR Radiation</span>
+          </label>
+          <label class="dock-item">
+            <input type="checkbox" id="layerTraverse" checked>
+            <span class="dock-indicator gold"></span>
+            <span class="dock-text">Perseverance Ground-Truth Traverse</span>
+          </label>
+          <label class="dock-item">
+            <input type="checkbox" id="layerWaypoints" checked>
+            <span class="dock-indicator blue"></span>
+            <span class="dock-text">NASA Base Camp &amp; Science Targets</span>
+          </label>
+          <label class="dock-item">
+            <input type="checkbox" id="layerContours" checked>
+            <span class="dock-indicator gray"></span>
+            <span class="dock-text">Topographic 10m Elevation Contours</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Basemap Style Switcher -->
+      <div class="map-basemap-selector">
+        <button class="basemap-pill active" data-basemap="openplanetary">OpenPlanetary Mars</button>
+        <button class="basemap-pill" data-basemap="mola">USGS MOLA Hillshade</button>
+        <button class="basemap-pill" data-basemap="satellite">Satellite High-Res</button>
+      </div>
+    </main>
+
+    <!-- Right Tactical Survival & Navigation Sidebar -->
+    <aside class="sidebar-section">
+      
+      <!-- Click-Anywhere Terrain Inspector Panel -->
+      <div class="card-panel inspector-card">
+        <div class="panel-header">
+          <span class="panel-icon">🔬</span>
+          <h2>TERRAIN &amp; MICROCLIMATE INSPECTOR</h2>
+          <span class="inspector-live-tag">CLICK MAP TO PROBE</span>
+        </div>
+        <div class="panel-body">
+          <div class="inspector-grid">
+            <div class="insp-cell">
+              <span class="insp-k">COORDINATES</span>
+              <span class="insp-v" id="inspCoords">18.4447° N, 77.4508° E</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">ELEVATION (MOLA)</span>
+              <span class="insp-v" id="inspElev">-2570 m</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">SLOPE GRADIENT</span>
+              <span class="insp-v" id="inspSlope">2.1° (Safe Flat)</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">SOIL TRACTION (THEMIS)</span>
+              <span class="insp-v" id="inspSoil">Consolidated Bedrock (1.0x)</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">MINERAL / BIOSIGNATURE</span>
+              <span class="insp-v cyan" id="inspMineral">Basaltic Regolith / Volcanic Floor</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">MICROCLIMATE TEMP</span>
+              <span class="insp-v" id="inspTemp">-62.4°C (Nominal)</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">RADIATION FLUX (RAD)</span>
+              <span class="insp-v" id="inspRad">0.24 mSv/day (GCR Baseline)</span>
+            </div>
+            <div class="insp-cell">
+              <span class="insp-k">PROVENANCE</span>
+              <span class="insp-v dim" id="inspProv">NASA Mars 2020 / HiRISE Verified</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EVA Route Planner Controller -->
+      <div class="card-panel">
+        <div class="panel-header">
+          <span class="panel-icon">⬢</span>
+          <h2>A* HAZARD-AWARE PATHFINDER</h2>
+        </div>
+        <div class="panel-body">
+          <div class="route-selector-group">
+            <div class="select-row">
+              <label>ORIGIN:</label>
+              <select id="routeOrigin" class="hud-select">
+                <option value="base_camp">Base Camp (Octavia E. Butler Landing)</option>
+                <option value="kodiak">Western Delta Front (Kodiak Butte)</option>
+                <option value="neretva">Neretva Vallis Inflow Channel</option>
+                <option value="margin">Carbonate Margin Unit</option>
+                <option value="seitah">Séítah Dune &amp; Boulder Field</option>
+                <option value="belva">Belva Impact Crater Rim</option>
+              </select>
+            </div>
+            <div class="select-row">
+              <label>DESTINATION:</label>
+              <select id="routeDestination" class="hud-select">
+                <option value="kodiak" selected>Western Delta Front (Kodiak Butte)</option>
+                <option value="base_camp">Base Camp (Octavia E. Butler Landing)</option>
+                <option value="neretva">Neretva Vallis Inflow Channel</option>
+                <option value="margin">Carbonate Margin Unit</option>
+                <option value="seitah">Séítah Dune &amp; Boulder Field</option>
+                <option value="belva">Belva Impact Crater Rim</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="route-action-buttons">
+            <button class="hud-btn btn-primary" id="btnCalculateRoute">
+              ⚡ CALCULATE SAFE ROUTE (A*)
+            </button>
+            <button class="hud-btn btn-secondary" id="btnClearRoute">
+              RESET
+            </button>
+          </div>
+          <p class="hint-text">💡 <em>Tip: Click anywhere on the Jezero Crater map to set a custom destination!</em></p>
+        </div>
+      </div>
+
+      <!-- Real-Time Spacesuit Telemetry (NASA xEMU PLSS) -->
+      <div class="card-panel">
+        <div class="panel-header">
+          <span class="panel-icon">🫁</span>
+          <h2>SPACESUIT SURVIVAL HUD (xEMU PLSS)</h2>
+          <span class="status-badge normal" id="suitStatusBadge">NOMINAL</span>
+        </div>
+        <div class="panel-body">
+          
+          <div class="stats-grid">
+            <div class="stat-box">
+              <div class="stat-lbl">TOTAL DISTANCE</div>
+              <div class="stat-num" id="statDistance">3.49 <span class="unit">km</span></div>
+              <div class="stat-sub">Detour: <span id="statDetour">+0.74 km</span></div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-lbl">EST. WALK TIME</div>
+              <div class="stat-num" id="statTime">58 mins</div>
+              <div class="stat-sub">Mars 0.38g Hiking Pace</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-lbl">ELEVATION GAIN</div>
+              <div class="stat-num" id="statIncline">+61 <span class="unit">m</span></div>
+              <div class="stat-sub">Max Gradient: <span id="statMaxSlope">2.8°</span></div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-lbl">CUMULATIVE DOSE</div>
+              <div class="stat-num" id="statRadiation">0.112 <span class="unit">mSv</span></div>
+              <div class="stat-sub">Limit: 50.0 mSv / EVA</div>
+            </div>
+          </div>
+
+          <div class="resource-meters">
+            <div class="meter-row">
+              <div class="meter-info">
+                <span class="meter-name">PRIMARY O₂ SUPPLY (PLSS)</span>
+                <span class="meter-val" id="meterO2Val">87%</span>
+              </div>
+              <div class="meter-track">
+                <div class="meter-fill o2-fill" id="meterO2Fill" style="width: 87%;"></div>
+              </div>
+              <div class="meter-sub">Consumption rate: 0.28 L/min (Nominal)</div>
+            </div>
+
+            <div class="meter-row">
+              <div class="meter-info">
+                <span class="meter-name">SUIT BATTERY &amp; HEATER</span>
+                <span class="meter-val" id="meterBatteryVal">86%</span>
+              </div>
+              <div class="meter-track">
+                <div class="meter-fill batt-fill" id="meterBatteryFill" style="width: 86%;"></div>
+              </div>
+              <div class="meter-sub">Thermal drain: 185W (Nominal)</div>
+            </div>
+
+            <div class="meter-row">
+              <div class="meter-info">
+                <span class="meter-name">IONIZING RADIATION ACCUMULATION</span>
+                <span class="meter-val" id="meterRadVal">0.112 mSv (0.2%)</span>
+              </div>
+              <div class="meter-track">
+                <div class="meter-fill rad-fill" id="meterRadFill" style="width: 2%;"></div>
+              </div>
+              <div class="meter-sub">Galactic Cosmic Ray background rate</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Tactical Hazard Alerts Stream -->
+      <div class="card-panel">
+        <div class="panel-header">
+          <span class="panel-icon">📡</span>
+          <h2>TACTICAL HAZARD ADVISORIES</h2>
+        </div>
+        <div class="panel-body">
+          <div class="advisory-log" id="advisoryLog">
+            <div class="log-entry log-safe">
+              <span class="log-time">[14:42:08]</span>
+              <span class="log-msg">A* Engine: Route computed. Western Delta Scarp impassable cliffs bypassed via gentle breach.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Elevation Profile Preview -->
+      <div class="card-panel">
+        <div class="panel-header">
+          <span class="panel-icon">📉</span>
+          <h2>ELEVATION &amp; SLOPE PROFILE</h2>
+        </div>
+        <div class="panel-body">
+          <canvas id="elevationCanvas" class="elevation-canvas" width="400" height="90"></canvas>
+          <div class="canvas-legend">
+            <span class="legend-dot green"></span> Safe Flat (&lt;8°)
+            <span class="legend-dot amber"></span> Moderate Climb (8°-15°)
+            <span class="legend-dot red"></span> Cliff Hazard (&gt;15°-20°)
+          </div>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- Emergency Space Weather Modal -->
+  <div class="emergency-modal" id="emergencyModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="flashing-alarm">🚨</span>
+        <h2>CRITICAL SPACE WEATHER ALARM: SOLAR PARTICLE EVENT (SPE)</h2>
+      </div>
+      <div class="modal-body">
+        <p class="alert-desc">
+          Perseverance MEDA radiation sensor detected an abrupt energetic proton flux spike: 
+          <strong>+48 mSv/hr</strong>. Extreme ionizing radiation storm and atmospheric dust squall imminent.
+        </p>
+        <div class="emergency-metrics">
+          <div class="em-box">
+            <div class="em-lbl">TIME TO PEAK FLUX</div>
+            <div class="em-val">18 MINUTES</div>
+          </div>
+          <div class="em-box">
+            <div class="em-lbl">SAFEST SHELTER</div>
+            <div class="em-val">OCTAVIA BASE CAMP AIRLOCK</div>
+          </div>
+        </div>
+        <p class="alert-action">
+          Automated Emergency A* Reroute has been engaged: All scientific sampling aborted. Plotting the fastest direct-path return corridor with cliff-fall protection.
+        </p>
+      </div>
+      <div class="modal-actions">
+        <button class="hud-btn btn-emergency" id="btnConfirmEmergency">
+          EXECUTE EMERGENCY RETURN PROTOCOL
+        </button>
+        <button class="hud-btn btn-secondary" id="btnDismissEmergency">
+          STAND DOWN ALERT
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Libraries: Three.js + OrbitControls + Leaflet.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  
+  <!-- Application Core Modules -->
+  <script src="js/jezero-data.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/pathfinding.js"></script>
+  <script src="js/terrain3d.js"></script>
+  <script src="js/telemetry.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
