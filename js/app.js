@@ -20,7 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeRouteLayer = null;
   let comparisonStraightLine = null;
   let customWaypointMarker = null;
+  let customOriginMarker = null;
   let customDestCoord = null;
+  let mapClickMode = 'dest'; // 'dest' | 'origin'
+  let currentO2Pct = 100;
 
   // 7 NASA Modality Layer Groups (2D Leaflet)
   const hazardLayerGroup = L.layerGroup();
@@ -409,9 +412,14 @@ document.addEventListener('DOMContentLoaded', () => {
             <strong>Temp:</strong> ${wp.temp} | <strong>Rad:</strong> ${wp.radiation}<br>
             <strong>Target:</strong> <span style="color:#fbbf24;">${wp.scienceTarget}</span>
           </div>
-          <button onclick="window.setRouteDestination('${wp.id}')" style="margin-top:8px;width:100%;padding:5px;background:#00f0ff;color:#000;border:none;font-weight:bold;cursor:pointer;border-radius:2px;">
-            PLOT A* ROUTE HERE
-          </button>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button onclick="window.setRouteOrigin('${wp.id}')" style="flex:1;padding:5px;background:#10b981;color:#000;border:none;font-weight:bold;cursor:pointer;border-radius:2px;font-size:10px;">
+              SET AS ORIGIN
+            </button>
+            <button onclick="window.setRouteDestination('${wp.id}')" style="flex:1;padding:5px;background:#00f0ff;color:#000;border:none;font-weight:bold;cursor:pointer;border-radius:2px;font-size:10px;">
+              SET TARGET
+            </button>
+          </div>
         </div>
       `);
 
@@ -438,6 +446,22 @@ document.addEventListener('DOMContentLoaded', () => {
       map.setView(wp.coords, Math.max(map.getZoom(), 13));
     }
   }
+
+  window.setRouteOrigin = (wpId) => {
+    const wp = data.waypoints.find(w => w.id === wpId);
+    if (wp) {
+      currentStart = [...wp.coords];
+      if (customOriginMarker && map) {
+        map.removeLayer(customOriginMarker);
+        customOriginMarker = null;
+      }
+      const origSel = document.getElementById('routeOrigin');
+      if (origSel) origSel.value = wp.id;
+      updateInspector(wp.coords[0], wp.coords[1]);
+      calculateAndRenderRoute();
+      if (map) map.closePopup();
+    }
+  };
 
   window.setRouteDestination = (wpId) => {
     const wp = data.waypoints.find(w => w.id === wpId);
@@ -504,24 +528,49 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function onSurfaceTargetSelected(lat, lon, createMarker) {
-    currentEnd = [lat, lon];
-    customDestCoord = [lat, lon];
     updateInspector(lat, lon);
 
-    if (createMarker && map) {
-      if (customWaypointMarker) {
-        map.removeLayer(customWaypointMarker);
+    if (mapClickMode === 'origin') {
+      currentStart = [lat, lon];
+      const origSel = document.getElementById('routeOrigin');
+      if (origSel) origSel.value = 'custom_origin';
+
+      if (createMarker && map) {
+        if (customOriginMarker) {
+          map.removeLayer(customOriginMarker);
+        }
+        const icon = L.divIcon({
+          className: 'tactical-marker',
+          html: `
+            <div class="marker-pin" style="background:#10b981;border-color:#fff;">🚩</div>
+            <div class="marker-label">ASTRONAUT ORIGIN</div>
+          `,
+          iconSize: [96, 40],
+          iconAnchor: [48, 20]
+        });
+        customOriginMarker = L.marker([lat, lon], { icon }).addTo(map);
       }
-      const icon = L.divIcon({
-        className: 'tactical-marker',
-        html: `
-          <div class="marker-pin" style="background:#ff2a4b;border-color:#fff;">📍</div>
-          <div class="marker-label">CUSTOM TARGET</div>
-        `,
-        iconSize: [80, 40],
-        iconAnchor: [40, 20]
-      });
-      customWaypointMarker = L.marker([lat, lon], { icon }).addTo(map);
+    } else {
+      currentEnd = [lat, lon];
+      customDestCoord = [lat, lon];
+      const destSel = document.getElementById('routeDestination');
+      if (destSel) destSel.value = 'custom_dest';
+
+      if (createMarker && map) {
+        if (customWaypointMarker) {
+          map.removeLayer(customWaypointMarker);
+        }
+        const icon = L.divIcon({
+          className: 'tactical-marker',
+          html: `
+            <div class="marker-pin" style="background:#ff2a4b;border-color:#fff;">📍</div>
+            <div class="marker-label">CUSTOM TARGET</div>
+          `,
+          iconSize: [80, 40],
+          iconAnchor: [40, 20]
+        });
+        customWaypointMarker = L.marker([lat, lon], { icon }).addTo(map);
+      }
     }
 
     audio.playClick();
@@ -566,7 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
       globe.renderRoute(route, currentStart, currentEnd, isSolarEmergency, customDestCoord);
     }
 
-    const tData = telemetry.compute(route, false, false);
+    const tData = telemetry.compute(route, false, false, currentO2Pct);
     updateHUDTelemetry(tData, route);
 
     const canvas = document.getElementById('elevationCanvas');
@@ -583,8 +632,41 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('statMaxSlope').textContent = `${tData.maxSlopeDeg}°`;
     document.getElementById('statRadiation').innerHTML = `${tData.doseMsv} <span class="unit">mSv</span>`;
 
-    document.getElementById('meterO2Val').textContent = `${tData.o2RemainingPct}%`;
-    document.getElementById('meterO2Fill').style.width = `${tData.o2RemainingPct}%`;
+    document.getElementById('statHeartRate').textContent = `${tData.heartRateBpm} bpm`;
+    document.getElementById('statMetabolic').textContent = `${tData.metabolicWatts} W`;
+    const rtEl = document.getElementById('statRoundTripO2');
+    rtEl.textContent = tData.roundTripO2Pct >= 0 ? `${tData.roundTripO2Pct}%` : `DEFICIT (${tData.roundTripO2Pct}%)`;
+    rtEl.style.color = tData.roundTripO2Pct < 20 ? 'var(--hud-red)' : 'var(--hud-green)';
+
+    const postTripClamped = Math.max(0, tData.o2RemainingPct);
+    document.getElementById('meterO2Val').textContent = tData.o2FeasibleOneWay ? `${postTripClamped}%` : `INSUFFICIENT`;
+    const o2Fill = document.getElementById('meterO2Fill');
+    o2Fill.style.width = `${postTripClamped}%`;
+    o2Fill.style.background = !tData.o2FeasibleOneWay ? 'var(--hud-red)' : (!tData.o2FeasibleRoundTrip ? 'var(--hud-amber)' : '');
+
+    const o2Sub = document.getElementById('meterO2Sub');
+    if (o2Sub) {
+      o2Sub.textContent = `${tData.o2FlowLpm} L/min · 4.3 psi · Trip: ${tData.o2LitersUsed} L (${tData.o2KgUsed} kg / ${tData.o2TripPct}%)`;
+    }
+
+    const valCurrentO2 = document.getElementById('valCurrentO2');
+    if (valCurrentO2) {
+      valCurrentO2.textContent = `${tData.startO2Pct}% (${tData.currentO2Liters} L · ${tData.currentO2Psi} psi)`;
+    }
+
+    const banner = document.getElementById('o2GoNoGoBanner');
+    if (banner) {
+      if (!tData.o2FeasibleOneWay) {
+        banner.className = 'o2-verdict critical';
+        banner.textContent = `ABORT: Needs ${tData.o2LitersUsed} L (${tData.o2TripPct}%), you only have ${tData.currentO2Liters} L (${tData.startO2Pct}%)`;
+      } else if (!tData.o2FeasibleRoundTrip) {
+        banner.className = 'o2-verdict warning';
+        banner.textContent = `ONE-WAY ONLY: ${postTripClamped}% left at target — recharge PLSS before return`;
+      } else {
+        banner.className = 'o2-verdict nominal';
+        banner.textContent = `GO FOR EVA — ${tData.roundTripO2Pct}% PLSS O₂ margin after round-trip`;
+      }
+    }
 
     document.getElementById('meterBatteryVal').textContent = `${tData.batteryRemainingPct}%`;
     document.getElementById('meterBatteryFill').style.width = `${tData.batteryRemainingPct}%`;
@@ -631,6 +713,62 @@ document.addEventListener('DOMContentLoaded', () => {
     calculateAndRenderRoute();
   });
 
+  // Live A* Cost Model Tuning Sliders (inspired by AstraMap-resource)
+  const bindCostSlider = (id, valId, suffix, applyFn) => {
+    const el = document.getElementById(id);
+    const valEl = document.getElementById(valId);
+    if (!el) return;
+    el.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      if (valEl) valEl.textContent = `${v}${suffix}`;
+      applyFn(v);
+      calculateAndRenderRoute();
+    });
+  };
+  bindCostSlider('sliderSlopePenalty', 'valSlopePenalty', '', (v) => pathfinder.setCostParams({ slopePenalty: v }));
+  bindCostSlider('sliderSandPenalty', 'valSandPenalty', 'x', (v) => pathfinder.setCostParams({ sandPenalty: v }));
+  bindCostSlider('sliderThermalPenalty', 'valThermalPenalty', 'x', (v) => pathfinder.setCostParams({ thermalPenalty: v }));
+
+  // Current PLSS O2 Reserve Simulator Slider
+  const sliderCurrentO2 = document.getElementById('sliderCurrentO2');
+  if (sliderCurrentO2) {
+    sliderCurrentO2.addEventListener('input', (e) => {
+      currentO2Pct = parseInt(e.target.value, 10) || 100;
+      calculateAndRenderRoute();
+    });
+  }
+
+  // Map Click Mode Toggle (Destination vs Origin Drop-Off)
+  const btnModeDest = document.getElementById('btnClickModeDest');
+  const btnModeOrigin = document.getElementById('btnClickModeOrigin');
+  const setMapClickMode = (mode) => {
+    mapClickMode = mode;
+    if (btnModeDest) btnModeDest.classList.toggle('active', mode === 'dest');
+    if (btnModeOrigin) btnModeOrigin.classList.toggle('active', mode === 'origin');
+  };
+  if (btnModeDest) btnModeDest.addEventListener('click', () => { audio.playClick(); setMapClickMode('dest'); });
+  if (btnModeOrigin) btnModeOrigin.addEventListener('click', () => { audio.playClick(); setMapClickMode('origin'); });
+
+  // Swap Origin <-> Destination (Return Trip)
+  const btnSwapRoute = document.getElementById('btnSwapRoute');
+  if (btnSwapRoute) {
+    btnSwapRoute.addEventListener('click', () => {
+      audio.playClick();
+      const tmpCoord = [...currentStart];
+      currentStart = [...currentEnd];
+      currentEnd = tmpCoord;
+
+      const origSel = document.getElementById('routeOrigin');
+      const destSel = document.getElementById('routeDestination');
+      if (origSel && destSel) {
+        const tmpVal = origSel.value;
+        origSel.value = destSel.value === 'custom_dest' ? 'custom_origin' : destSel.value;
+        destSel.value = tmpVal === 'custom_origin' ? 'custom_dest' : tmpVal;
+      }
+      calculateAndRenderRoute();
+    });
+  }
+
   document.getElementById('btnClearRoute').addEventListener('click', () => {
     audio.playClick();
     customDestCoord = null;
@@ -638,12 +776,19 @@ document.addEventListener('DOMContentLoaded', () => {
       map.removeLayer(customWaypointMarker);
       customWaypointMarker = null;
     }
+    if (customOriginMarker && map) {
+      map.removeLayer(customOriginMarker);
+      customOriginMarker = null;
+    }
     if (activeRouteLayer && map) map.removeLayer(activeRouteLayer);
     if (comparisonStraightLine && map) map.removeLayer(comparisonStraightLine);
     if (globe) globe.clearRoute();
 
     currentStart = [...data.waypoints[0].coords];
     currentEnd = [...data.waypoints[1].coords];
+    currentO2Pct = 100;
+    if (sliderCurrentO2) sliderCurrentO2.value = '100';
+    setMapClickMode('dest');
     document.getElementById('routeOrigin').value = 'base_camp';
     document.getElementById('routeDestination').value = 'kodiak';
     telemetry.setSolarStorm(false);

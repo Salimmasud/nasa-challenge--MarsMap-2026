@@ -7,11 +7,14 @@
 
 class SpacesuitTelemetryModel {
   constructor() {
-    this.NOMINAL_EVA_HOURS = 8.0;
-    this.BASE_WALK_SPEED_KMH = 3.6; // Mars 0.38g nominal hiking speed
-    this.BASE_O2_RATE_PCT_PER_KM = 3.4;
+    // NASA xEMU PLSS & NASA-STD-3001 / HIDH Reference Parameters
+    this.NOMINAL_EVA_HOURS = 8.0;           // NASA/TM-20205008709 xEMU 8-hr EVA
+    this.PLSS_O2_CAPACITY_L = 530.0;        // ~0.757 kg usable O2 at STP (1.429 g/L)
+    this.PLSS_O2_CAPACITY_KG = 0.757;       // High-pressure primary O2 tank mass
+    this.PLSS_TANK_MAX_PSI = 3000;          // Primary tank pressure (suit loop: 4.3 psi)
+    this.BASE_WALK_SPEED_KMH = 2.88;        // 0.80 m/s nominal pressurized EVA speed (NASA Analog ConOps)
     this.BASE_BATTERY_PCT_PER_KM = 4.0;
-    this.GCR_BASE_MSV_PER_KM = 0.032;
+    this.GCR_BASE_MSV_PER_KM = 0.032;       // MSL/RAD Jezero surface GCR baseline
 
     this.solarStormActive = false;
   }
@@ -20,15 +23,16 @@ class SpacesuitTelemetryModel {
     this.solarStormActive = active;
   }
 
-  compute(routeAnalysis, isInShadowZone = false, isHighRadiationZone = false) {
+  compute(routeAnalysis, isInShadowZone = false, isHighRadiationZone = false, currentO2Pct = 100) {
     const dist = routeAnalysis.totalDistanceKm || 0.1;
     const climb = routeAnalysis.totalClimbM || 0;
     const maxSlope = routeAnalysis.maxSlopeDeg || 0;
+    const startO2Pct = Math.max(5, Math.min(100, Number(currentO2Pct) || 100));
 
-    // Mars 0.38g hiking speed adjusted for slope (Minetti / Tobler hiking function)
+    // Mars 0.38g pressurized suit speed adjusted for slope (NASA Analog + Tobler/Minetti)
     let speedKmh = this.BASE_WALK_SPEED_KMH;
-    if (maxSlope > 6) {
-      speedKmh = Math.max(1.8, this.BASE_WALK_SPEED_KMH - (maxSlope * 0.14));
+    if (maxSlope > 4) {
+      speedKmh = Math.max(1.4, this.BASE_WALK_SPEED_KMH - ((maxSlope - 4) * 0.12));
     }
     const walkTimeHours = dist / speedKmh;
     const totalMinutes = Math.round(walkTimeHours * 60);
@@ -36,10 +40,27 @@ class SpacesuitTelemetryModel {
     const minutes = totalMinutes % 60;
     const timeFormatted = hours > 0 ? `${hours}h ${minutes}m` : `${minutes} mins`;
 
-    // Metabolic O2 expenditure
-    const inclineO2Penalty = (climb / 100) * 1.8;
-    let o2ConsumedPct = (dist * this.BASE_O2_RATE_PCT_PER_KM) + inclineO2Penalty;
-    let o2RemainingPct = Math.max(12, Math.round(100 - o2ConsumedPct));
+    // NASA-STD-3001 / HIDH Metabolic O2 expenditure (1000 BTU/hr = 293 W baseline, 20.1 kJ/L O2)
+    const walkTimeSec = walkTimeHours * 3600;
+    const climbRate = walkTimeHours > 0 ? (climb / walkTimeHours) : 0;
+    const metabolicWatts = Math.round(293 + (maxSlope * 4.5) + Math.min(145, climbRate * 0.50));
+    const metabolicBtuHr = Math.round(metabolicWatts * 3.412);
+    const o2FlowLpm = Number((((metabolicWatts / 1000) * 60) / 20.1).toFixed(2));
+    const o2LitersUsed = Number(((metabolicWatts * walkTimeSec) / 20100).toFixed(1));
+    const o2KgUsed = Number((o2LitersUsed * 0.001429).toFixed(3));
+
+    const o2TripPct = Number(((o2LitersUsed / this.PLSS_O2_CAPACITY_L) * 100).toFixed(1));
+    const currentO2Liters = Number(((startO2Pct / 100) * this.PLSS_O2_CAPACITY_L).toFixed(1));
+    const currentO2Psi = Math.round((startO2Pct / 100) * this.PLSS_TANK_MAX_PSI);
+
+    const o2RemainingPct = Math.round(startO2Pct - o2TripPct);
+    const roundTripO2Pct = Math.round(startO2Pct - (o2TripPct * 2));
+    const o2FeasibleOneWay = startO2Pct >= o2TripPct;
+    const o2FeasibleRoundTrip = startO2Pct >= (o2TripPct * 2);
+
+    // Crew Biometrics (NASA-STD-3001 cardiovascular & CO2 limits)
+    const heartRateBpm = Math.min(165, Math.round(82 + (metabolicWatts - 293) * 0.34 + (this.solarStormActive ? 14 : 0)));
+    const co2MmHg = Number((1.8 + (metabolicWatts - 280) * 0.008).toFixed(1));
 
     // Suit Battery & Sublimator / Heater Drain
     let batteryDrainPct = (dist * this.BASE_BATTERY_PCT_PER_KM);
@@ -58,15 +79,18 @@ class SpacesuitTelemetryModel {
     }
     doseMsv = Number(doseMsv.toFixed(3));
 
-    // Status Badge
+    // Status Badge (Go / No-Go Check)
     let suitStatus = "NOMINAL";
     let statusClass = "normal";
 
     if (this.solarStormActive) {
       suitStatus = "CRITICAL: SPE FLUX";
       statusClass = "critical";
-    } else if (o2RemainingPct < 30 || batteryRemainingPct < 30 || maxSlope > 18) {
-      suitStatus = "WARNING: HIGH LOAD";
+    } else if (!o2FeasibleOneWay) {
+      suitStatus = "ABORT: O₂ INSUFFICIENT";
+      statusClass = "critical";
+    } else if (!o2FeasibleRoundTrip || o2RemainingPct < 25 || batteryRemainingPct < 30 || maxSlope > 18) {
+      suitStatus = !o2FeasibleRoundTrip ? "WARN: ONE-WAY O₂ ONLY" : "WARNING: HIGH LOAD";
       statusClass = "warning";
     }
 
@@ -74,8 +98,20 @@ class SpacesuitTelemetryModel {
     const advisories = [];
     advisories.push({
       type: "safe",
-      text: `A* Navigation: Safe route established (${dist} km, ${timeFormatted} at 0.38g).`
+      text: `A* Navigation: ${dist} km, ${timeFormatted} at ${speedKmh.toFixed(2)} km/h (0.38g NASA ConOps).`
     });
+
+    if (!o2FeasibleOneWay) {
+      advisories.push({
+        type: "critical",
+        text: `ABORT TRAVERSE: Route needs ${o2LitersUsed} L (${o2TripPct}% / ${o2KgUsed} kg) O₂, exceeding your ${startO2Pct}% (${currentO2Liters} L) PLSS reserve!`
+      });
+    } else if (!o2FeasibleRoundTrip) {
+      advisories.push({
+        type: "warn",
+        text: `No Return Margin: ${o2LitersUsed} L (${o2TripPct}%) one-way leaves ${Math.max(0, o2RemainingPct)}% O₂ — recharge PLSS before returning.`
+      });
+    }
 
     if (routeAnalysis.detourKm > 0.4) {
       advisories.push({
@@ -99,17 +135,32 @@ class SpacesuitTelemetryModel {
     } else {
       advisories.push({
         type: "info",
-        text: `Radiation Status: Galactic Cosmic Ray background stable (${doseMsv} mSv cumulative).`
+        text: `PLSS Flow: ${o2FlowLpm} L/min (${metabolicBtuHr} BTU/hr) | HR ${heartRateBpm} bpm | CO₂ ${co2MmHg} mmHg.`
       });
     }
 
     return {
       distanceKm: dist,
+      speedKmh: Number(speedKmh.toFixed(2)),
       walkTimeFormatted: timeFormatted,
       totalMinutes: totalMinutes,
       climbMeters: climb,
       maxSlopeDeg: maxSlope,
+      startO2Pct: startO2Pct,
+      currentO2Liters: currentO2Liters,
+      currentO2Psi: currentO2Psi,
+      o2FlowLpm: o2FlowLpm,
+      o2LitersUsed: o2LitersUsed,
+      o2KgUsed: o2KgUsed,
+      o2TripPct: o2TripPct,
       o2RemainingPct: o2RemainingPct,
+      roundTripO2Pct: roundTripO2Pct,
+      o2FeasibleOneWay: o2FeasibleOneWay,
+      o2FeasibleRoundTrip: o2FeasibleRoundTrip,
+      metabolicWatts: metabolicWatts,
+      metabolicBtuHr: metabolicBtuHr,
+      heartRateBpm: heartRateBpm,
+      co2MmHg: co2MmHg,
       batteryRemainingPct: batteryRemainingPct,
       doseMsv: doseMsv,
       suitStatus: suitStatus,

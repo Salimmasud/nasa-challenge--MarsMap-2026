@@ -94,15 +94,21 @@ class JezeroMarsGlobe {
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.container.appendChild(this.renderer.domElement);
 
-    // 4. OrbitControls
-    this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.065;
-    this.controls.rotateSpeed = 0.55;
-    this.controls.zoomSpeed = 0.9;
-    this.controls.panSpeed = 0.5;
-    this.controls.minDistance = 0.14;
-    this.controls.maxDistance = 420;
+    // 4. Unrestricted 360° Ball-Roll Camera State (No Polar Lock / Infinite Roll)
+    this.ballRoll = {
+      isDragging: false,
+      lastX: 0,
+      lastY: 0,
+      velX: 0,
+      velY: 0,
+      damping: 0.92,
+      rotateSpeed: 0.0055,
+      minDistance: 108,
+      maxDistance: 420,
+      autoRotate: true,
+      autoRotateSpeed: 0.0022
+    };
+    this.controls = { target: new THREE.Vector3(0, 0, 0), update: () => {} };
 
     // 5. Lighting (Solar directional light + soft ambient Mars bounce)
     const ambient = new THREE.AmbientLight(0xd8c3b4, 0.72);
@@ -930,15 +936,16 @@ class JezeroMarsGlobe {
   setOrbitalCameraImmediate() {
     const dir = this.latLonToVec3(18.4, 77.45, 0, 0).normalize();
     this.controls.target.set(0, 0, 0);
-    this.camera.position.copy(dir.multiplyScalar(175));
-    this.controls.update();
+    this.camera.up.set(0, 1, 0);
+    this.camera.position.copy(dir.multiplyScalar(220));
+    this.camera.lookAt(0, 0, 0);
   }
 
   flyToOrbital() {
     this.zoomTriggerLock = true;
     setTimeout(() => { this.zoomTriggerLock = false; }, 1400);
     const dir = this.latLonToVec3(18.4, 77.45, 0, 0).normalize();
-    this.startFlyAnimation(new THREE.Vector3(0, 0, 0), dir.multiplyScalar(185), 1000);
+    this.startFlyAnimation(new THREE.Vector3(0, 0, 0), dir.multiplyScalar(220), 1000);
   }
 
   flyToJezeroAndEnter() {
@@ -957,6 +964,8 @@ class JezeroMarsGlobe {
   }
 
   startFlyAnimation(targetEnd, camEnd, durationMs, onComplete = null) {
+    this.ballRoll.velX = 0;
+    this.ballRoll.velY = 0;
     this.flyAnim = {
       startTime: performance.now(),
       duration: durationMs,
@@ -964,32 +973,85 @@ class JezeroMarsGlobe {
       targetEnd,
       camStart: this.camera.position.clone(),
       camEnd,
+      upStart: this.camera.up.clone(),
+      upEnd: new THREE.Vector3(0, 1, 0),
       onComplete
     };
   }
 
+  applyBallRoll(yawRad, pitchRad) {
+    const forward = new THREE.Vector3().subVectors(this.controls.target, this.camera.position).normalize();
+    const right = new THREE.Vector3().crossVectors(forward, this.camera.up).normalize();
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(this.camera.up, yawRad);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(right, pitchRad);
+    const q = qPitch.multiply(qYaw);
+
+    this.camera.position.sub(this.controls.target).applyQuaternion(q).add(this.controls.target);
+    this.camera.up.applyQuaternion(q).normalize();
+    this.camera.lookAt(this.controls.target);
+  }
+
   // --------------------------------------------------------------------------
-  // Raycasting & Pointer Events
+  // Raycasting & Pointer Events (Unrestricted 360° Ball-Roll)
   // --------------------------------------------------------------------------
   bindEvents() {
     const dom = this.renderer.domElement;
+    dom.style.touchAction = 'none';
+    dom.style.cursor = 'grab';
 
     dom.addEventListener('pointerdown', (e) => {
       this.pointerDownPos = { x: e.clientX, y: e.clientY };
-      this.flyAnim = null; // Allow user to interrupt fly animation cleanly
+      this.flyAnim = null;
+      this.ballRoll.isDragging = true;
+      this.ballRoll.autoRotate = false;
+      this.ballRoll.lastX = e.clientX;
+      this.ballRoll.lastY = e.clientY;
+      this.ballRoll.velX = 0;
+      this.ballRoll.velY = 0;
+      dom.style.cursor = 'grabbing';
+      if (dom.setPointerCapture) {
+        try { dom.setPointerCapture(e.pointerId); } catch (_) {}
+      }
     });
 
     dom.addEventListener('pointermove', (e) => {
+      if (this.ballRoll.isDragging) {
+        const dx = e.clientX - this.ballRoll.lastX;
+        const dy = e.clientY - this.ballRoll.lastY;
+        this.ballRoll.lastX = e.clientX;
+        this.ballRoll.lastY = e.clientY;
+
+        const yaw = -dx * this.ballRoll.rotateSpeed;
+        const pitch = -dy * this.ballRoll.rotateSpeed;
+        this.ballRoll.velX = yaw;
+        this.ballRoll.velY = pitch;
+        this.applyBallRoll(yaw, pitch);
+        return;
+      }
+
       const hit = this.raycastSurface(e);
       if (hit && this.callbacks.onHover) {
         this.callbacks.onHover(hit.lat, hit.lon);
       }
     });
 
+    const endDrag = (e) => {
+      if (this.ballRoll.isDragging) {
+        this.ballRoll.isDragging = false;
+        dom.style.cursor = 'grab';
+        if (dom.releasePointerCapture) {
+          try { dom.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+      }
+    };
+
+    dom.addEventListener('pointercancel', endDrag);
+
     dom.addEventListener('pointerup', (e) => {
+      endDrag(e);
       const dx = e.clientX - this.pointerDownPos.x;
       const dy = e.clientY - this.pointerDownPos.y;
-      if (Math.hypot(dx, dy) > 5) return; // Was an orbit drag, not a click
+      if (Math.hypot(dx, dy) > 5) return; // Was a roll drag, not a click
 
       // Check waypoint beacons first
       const rect = dom.getBoundingClientRect();
@@ -1010,6 +1072,15 @@ class JezeroMarsGlobe {
         this.callbacks.onMapClick(hit.lat, hit.lon);
       }
     });
+
+    dom.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.flyAnim = null;
+      const dist = this.camera.position.length();
+      const factor = e.deltaY > 0 ? 1.09 : 0.91;
+      const nextDist = Math.max(this.ballRoll.minDistance, Math.min(this.ballRoll.maxDistance, dist * factor));
+      this.camera.position.setLength(nextDist);
+    }, { passive: false });
 
     window.addEventListener('resize', () => this.onResize());
   }
@@ -1048,25 +1119,40 @@ class JezeroMarsGlobe {
       const ease = 1 - Math.pow(1 - t, 3); // Cubic ease-out
       this.controls.target.lerpVectors(this.flyAnim.targetStart, this.flyAnim.targetEnd, ease);
       this.camera.position.lerpVectors(this.flyAnim.camStart, this.flyAnim.camEnd, ease);
+      if (this.flyAnim.upStart && this.flyAnim.upEnd) {
+        this.camera.up.lerpVectors(this.flyAnim.upStart, this.flyAnim.upEnd, ease).normalize();
+      }
+      this.camera.lookAt(this.controls.target);
       if (t >= 1) {
         const cb = this.flyAnim.onComplete;
         this.flyAnim = null;
         if (cb) cb();
       }
-    } else if (!this.zoomTriggerLock && this.callbacks.onEnterJezero) {
-      // Auto-enter 2D HiRISE map when user scrolls/zooms in close to Jezero Crater
-      const dist = this.camera.position.length();
-      if (dist < 118) {
-        const jezeroDir = this.latLonToVec3(18.4447, 77.4508, 0, 0).normalize();
-        const camDir = this.camera.position.clone().normalize();
-        if (jezeroDir.dot(camDir) > 0.85) {
-          this.zoomTriggerLock = true;
-          this.callbacks.onEnterJezero();
+    } else {
+      if (!this.ballRoll.isDragging) {
+        if (Math.abs(this.ballRoll.velX) > 1e-5 || Math.abs(this.ballRoll.velY) > 1e-5) {
+          this.applyBallRoll(this.ballRoll.velX, this.ballRoll.velY);
+          this.ballRoll.velX *= this.ballRoll.damping;
+          this.ballRoll.velY *= this.ballRoll.damping;
+        } else if (this.ballRoll.autoRotate) {
+          this.applyBallRoll(this.ballRoll.autoRotateSpeed, 0);
+        }
+      }
+
+      if (!this.zoomTriggerLock && this.callbacks.onEnterJezero) {
+        // Auto-enter 2D HiRISE map when user scrolls/zooms in close to Jezero Crater
+        const dist = this.camera.position.length();
+        if (dist < 118) {
+          const jezeroDir = this.latLonToVec3(18.4447, 77.4508, 0, 0).normalize();
+          const camDir = this.camera.position.clone().normalize();
+          if (jezeroDir.dot(camDir) > 0.85) {
+            this.zoomTriggerLock = true;
+            this.callbacks.onEnterJezero();
+          }
         }
       }
     }
 
-    this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.updateProjectedLabels();
   }

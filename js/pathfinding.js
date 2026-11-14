@@ -22,7 +22,26 @@ class JezeroPathfinder {
     this.cols = 65;
     this.grid = [];
 
+    // Live-tunable A* cost model parameters (inspired by AstraMap-resource)
+    this.slopePenalty = 0.14;
+    this.sandPenalty = 5.0;
+    this.thermalPenalty = 2.2;
+
     this.initCostGrid();
+  }
+
+  setCostParams({ slopePenalty, sandPenalty, thermalPenalty }) {
+    let rebuildGrid = false;
+    if (typeof slopePenalty === 'number') this.slopePenalty = slopePenalty;
+    if (typeof sandPenalty === 'number' && sandPenalty !== this.sandPenalty) {
+      this.sandPenalty = sandPenalty;
+      rebuildGrid = true;
+    }
+    if (typeof thermalPenalty === 'number' && thermalPenalty !== this.thermalPenalty) {
+      this.thermalPenalty = thermalPenalty;
+      rebuildGrid = true;
+    }
+    if (rebuildGrid) this.initCostGrid();
   }
 
   coordToCell(lat, lon) {
@@ -111,7 +130,7 @@ class JezeroPathfinder {
         for (const f of sandTraps) {
           const poly = f.geometry.coordinates[0];
           if (this.pointInPolygon(coord, poly)) {
-            baseCost *= 5.0; // Heavy traction fatigue penalty
+            baseCost *= this.sandPenalty; // Heavy traction fatigue penalty
             if (!hazardDesc) hazardDesc = f.properties.desc;
           }
         }
@@ -121,7 +140,7 @@ class JezeroPathfinder {
           const poly = f.geometry.coordinates[0];
           if (this.pointInPolygon(coord, poly)) {
             if (f.properties.envType === 'cryo_shadow') {
-              baseCost *= 2.2; // Avoid thermal heater power drain
+              baseCost *= this.thermalPenalty; // Avoid thermal heater power drain
               if (!hazardDesc) hazardDesc = f.properties.desc;
             }
           }
@@ -252,7 +271,7 @@ class JezeroPathfinder {
         const elevDiff = neighborNode.elevation - currentNode.elevation;
         let slopePenalty = 1.0;
         if (elevDiff > 0) {
-          slopePenalty += (elevDiff * 0.14); // Uphill walking fatigue
+          slopePenalty += (elevDiff * this.slopePenalty); // Uphill walking fatigue
         }
 
         const tentativeG = gScore[currentKey] + (dir.dist * neighborNode.cost * slopePenalty);
