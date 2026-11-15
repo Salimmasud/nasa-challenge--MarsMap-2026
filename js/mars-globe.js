@@ -592,7 +592,7 @@ class JezeroMarsGlobe {
 
     // 7. 10m Elevation Contours
     this.data.contours.forEach(c => {
-      this.buildPolyline(c.coords, this.layerGroups.contours, 0x94a3b8, 0.016, 0.48);
+      this.buildPolyline(c.coords, this.layerGroups.contours, 0x3b82f6, 0.018, 0.85);
     });
   }
 

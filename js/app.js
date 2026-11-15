@@ -362,10 +362,10 @@ document.addEventListener('DOMContentLoaded', () => {
     contourLayerGroup.clearLayers();
     data.contours.forEach(c => {
       const line = L.polyline(c.coords, {
-        color: '#e2e8f0',
-        weight: 1.5,
-        opacity: 0.65,
-        dashArray: '3, 4'
+        color: '#3b82f6',
+        weight: 2.2,
+        opacity: 0.85,
+        dashArray: '4, 4'
       }).addTo(contourLayerGroup);
       line.bindTooltip(`Elevation Contour: ${c.elevation}m`, { sticky: true });
     });
@@ -675,6 +675,39 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('meterRadVal').textContent = `${tData.doseMsv} mSv (${radFillPct.toFixed(1)}%)`;
     document.getElementById('meterRadFill').style.width = `${Math.max(2, radFillPct)}%`;
 
+    // Circular SVG Ring Gauges (Circumference = 2 * PI * 29 = 182.21)
+    const RING_C = 182.21;
+    const ringO2 = document.getElementById('ringO2Circle');
+    if (ringO2) {
+      ringO2.style.strokeDashoffset = String(RING_C * (1 - postTripClamped / 100));
+      ringO2.style.stroke = !tData.o2FeasibleOneWay ? '#ef4444' : (!tData.o2FeasibleRoundTrip ? '#f59e0b' : '#10b981');
+    }
+    const ringBatt = document.getElementById('ringBattCircle');
+    if (ringBatt) {
+      ringBatt.style.strokeDashoffset = String(RING_C * (1 - tData.batteryRemainingPct / 100));
+    }
+    const ringRad = document.getElementById('ringRadCircle');
+    if (ringRad) {
+      ringRad.style.strokeDashoffset = String(RING_C * (1 - Math.max(0.02, radFillPct / 100)));
+    }
+    const riskPill = document.getElementById('routeRiskPill');
+    if (riskPill) {
+      if (tData.statusClass === 'critical' || tData.maxSlopeDeg > 15) {
+        riskPill.className = 'risk-pill high';
+        riskPill.textContent = 'High';
+      } else if (tData.statusClass === 'warning' || tData.maxSlopeDeg > 8 || route.detourKm > 0.4) {
+        riskPill.className = 'risk-pill moderate';
+        riskPill.textContent = 'Moderate';
+      } else {
+        riskPill.className = 'risk-pill low';
+        riskPill.textContent = 'Low';
+      }
+    }
+    const alertCountPill = document.getElementById('alertCountPill');
+    if (alertCountPill) {
+      alertCountPill.textContent = String(tData.advisories.length);
+    }
+
     const badge = document.getElementById('suitStatusBadge');
     badge.textContent = tData.suitStatus;
     badge.className = `status-badge ${tData.statusClass}`;
@@ -864,6 +897,19 @@ document.addEventListener('DOMContentLoaded', () => {
   setupOpacity('opacityThermal', thermalLayerGroup, 'thermal');
   setupOpacity('opacityTraverse', traverseLayerGroup, 'traverse');
   setupOpacity('opacityContours', contourLayerGroup, 'contours');
+
+  // Calculation Methodology & Cost Tuning Modals
+  const bindModal = (openId, closeId, modalId) => {
+    const modal = document.getElementById(modalId);
+    const openBtn = document.getElementById(openId);
+    const closeBtn = document.getElementById(closeId);
+    if (!modal) return;
+    if (openBtn) openBtn.addEventListener('click', () => { audio.playClick(); modal.classList.add('active'); });
+    if (closeBtn) closeBtn.addEventListener('click', () => { audio.playClick(); modal.classList.remove('active'); });
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('active'); });
+  };
+  bindModal('btnOpenCalcModal', 'btnCloseCalcModal', 'calcModal');
+  bindModal('btnOpenTuningModal', 'btnCloseTuningModal', 'tuningModal');
 
   // Floating Collapsible HUD Drawers (Left & Right)
   const leftDrawer = document.getElementById('leftDrawer');
