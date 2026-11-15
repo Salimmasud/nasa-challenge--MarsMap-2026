@@ -675,8 +675,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('meterRadVal').textContent = `${tData.doseMsv} mSv (${radFillPct.toFixed(1)}%)`;
     document.getElementById('meterRadFill').style.width = `${Math.max(2, radFillPct)}%`;
 
-    // Circular SVG Ring Gauges (Circumference = 2 * PI * 29 = 182.21)
-    const RING_C = 182.21;
+    // Circular SVG Ring Gauges (Circumference = 2 * PI * 35 = 219.91)
+    const RING_C = 219.91;
     const ringO2 = document.getElementById('ringO2Circle');
     if (ringO2) {
       ringO2.style.strokeDashoffset = String(RING_C * (1 - postTripClamped / 100));
